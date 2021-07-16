@@ -28,7 +28,7 @@ type Message struct {
 	deferred   time.Duration // 消息的延迟发送时间
 }
 
-func NewMessagge(id MessageID, body []byte) *Message {
+func NewMessage(id MessageID, body []byte) *Message {
 	return &Message{
 		ID:        id,
 		Body:      body,

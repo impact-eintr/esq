@@ -23,12 +23,14 @@ type Channel struct {
 	name      string // channel名
 	ctx       *context
 
-	backend   BackendQueue // 二级存储
-	exitFlag  int32        // 准备退出
+	backend BackendQueue // 二级存储
+
+	memMsgCh  chan *Message // channel的消息管道
+	exitFlag  int32         // 准备退出
 	exitMutex sync.RWMutex
 
 	// stat tracking
-	clients        map[int64]Consumer
+	clients        map[int64]Consumer // 连接该channel的消费者
 	paused         int32
 	temp           bool
 	deleteCallback func(*Channel)

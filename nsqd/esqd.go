@@ -1,5 +1,8 @@
 package esqd
 
+// esqd 的逻辑
+// Producer --> 消息 --> topic --> channels --> Consumer
+
 import (
 	"log"
 	"net"
@@ -54,6 +57,18 @@ type ESQD struct {
 	// ci *clusterinfo.ClusterInfo
 }
 
+// esqd元数据结构体 nsqd进程退出时写入磁盘 启动时读取
+type meta struct {
+	Topics []struct {
+		Name     string `json:"name"`
+		Paused   bool   `json:"paused"` // topic状态
+		Channels []struct {
+			Name   string `json:"name"`
+			Paused bool   `json::paused` // channel状态
+		} `json:"channels"`
+	} `json:"topics"`
+}
+
 func New(opts *Options) (*ESQD, error) {
 	var err error
 
@@ -90,6 +105,44 @@ func New(opts *Options) (*ESQD, error) {
 
 }
 
+func (e *ESQD) Main() error {
+	ctx := &context{e}
+
+	exitCh := make(chan error)
+	var once sync.Once
+	exitFunc := func(err error) {
+		once.Do(func() {
+			if err != nil {
+				e.logf(LOG_FATAL, "%s", err)
+			}
+			exitCh <- err
+		})
+	}
+
+	// 确保所有的gouroutine都运行完毕
+	// 建立tcpSerrver
+	tcpServer := &serverServer{ctx: ctx}
+	e.waitGroup.Wrap(func() {
+		exitFunc(protocol.TCPServer(e.tcpListener, tcpServer, e.logf))
+	})
+	// 建立httpSerrver
+	httpServer := newHTTPServer(ctx)
+	e.waitGroup.Wrap(func() {
+		exitFunc(http_api.Serve(e.httpListener, httpServer, "HTTP", e.logf))
+	})
+
+	// 队列scan扫描协程
+	e.waitGroup.Wrap(e.queueScanLoop)
+	// lookup查找协程
+	e.waitGroup.Wrap(e.lookupLoop)
+	if e.getOpts().StatsAddress != "" {
+		e.waitGroup.Wrap(e.statsdLoop)
+	}
+
+	err := <-exitCh // 阻塞在这里
+	return err
+}
+
 func (e *ESQD) getOpts() *Options {
 	return e.opts.Load().(*Options)
 
@@ -110,12 +163,10 @@ func (e *ESQD) Notify(v interface{}) {
 				return
 			}
 			e.Lock()
-
 			err := e.PersistMetadata()
 			if err != nill {
-				n.logf(LOG_ERROR, "faild to persist metadata - %s", err)
+				e.logf(LOG_ERROR, "faild to persist metadata - %s", err)
 			}
-
 			e.Unlock()
 		}
 	})

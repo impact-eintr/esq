@@ -17,7 +17,7 @@ type Options struct {
 	// 设置日志
 	LogLevel  lg.LogLevel
 	LogPrefix string
-	Logger    lg.Logger
+	Logger    Logger
 
 	// 设置服务
 	TCPAddress            string
@@ -27,12 +27,27 @@ type Options struct {
 	HTTPClientConnTimeout time.Duration
 	HTTPClientReqTimeout  time.Duration
 
-	// 磁盘配置
+	// diskqueue 配置
 	DataPath     string
 	MemQueueSize int64
 	MaxFileSize  int64
 	SyncEvery    int64
 	SyncTimeout  time.Duration
+
+	QueueScanInterval        time.Duration
+	QueueScanRefreshInterval time.Duration
+	QueueScanSelectionCount  int64
+	QueueScanWorkerPoolMax   int64
+	QueueScanDirtyPercent    float64
+
+	// 消息与命令配置
+
+	// 状态集
+	StatsAddress       string
+	StatsPrefix        string
+	StatsInterval      time.Duration
+	StatsMemStats      bool
+	StatsUDPPacketSize int
 }
 
 func NewOptions() *Options {
