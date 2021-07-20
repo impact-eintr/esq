@@ -40,8 +40,9 @@ type ESQD struct {
 	// esqd中 topic map
 	topicMap map[string]*Topic
 
-	clientLock  sync.RWMutex
-	clients     map[int64]Client
+	clientLock sync.RWMutex
+	clients    map[int64]Client
+
 	lookupPeers atomic.Value
 
 	tcpListener  net.Listener

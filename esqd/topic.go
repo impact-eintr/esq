@@ -21,9 +21,6 @@ type Topic struct {
 	backend    BackendQueue        // 二级磁盘存储队列
 	memMsgChan chan *Message       // 消息队列当nsqd收到消息则写入
 
-	memToFileCh chan *Message // 将内存中的消息定时刷新到磁盘中
-	memBackend  BackendQueue  // 内存消息对应的磁盘存储队列
-
 	startCh         chan int              // 启动channel
 	exitCh          chan int              // 终止channel
 	channelUpdateCh chan int              // topic对应的channel map 发生改变更新
@@ -70,12 +67,7 @@ func NewTopic(topicName string, ctx *context, deleteCaback func(*Topic)) *Topic 
 		t.backend = diskqueue.New()
 	}
 
-	t.memBackend = diskqueue.New()
-
 	t.waitGroup.Wrap(t.messagePump)
-
-	// 内存消息落盘
-	t.waitGroup.Wrap(t.putMemoryToFile)
 
 	// 通知lookup有新的topic
 	t.ctx.esqd.Notify(t)
@@ -85,13 +77,13 @@ func NewTopic(topicName string, ctx *context, deleteCaback func(*Topic)) *Topic 
 }
 
 // 内存消息落盘
-func (t *Topic) putMemoryToFile() {
-	message := t.memMsgChan
-	// 阻塞落盘
-	b := bufferrPoolGget()
-	_ = writeMessaggeToBackendd(b, messageg, t.memBackend)
-	bufferPoolPut(b)
-}
+//func (t *Topic) putMemoryToFile() {
+//	message := t.memMsgChan
+//	// 阻塞落盘
+//	b := bufferrPoolGget()
+//	_ = writeMessaggeToBackendd(b, messageg, t.memBackend)
+//	bufferPoolPut(b)
+//}
 
 func (t *Topic) Start() {
 	select {

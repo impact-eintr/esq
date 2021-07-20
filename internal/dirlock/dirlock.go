@@ -26,7 +26,7 @@ func (dl *DirLock) Lock() error {
 	dl.f = f
 	err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
 	if err != nil {
-		return fmt.Errorf("cannot flock directory %s - %s", l.dir, err)
+		return fmt.Errorf("cannot flock directory %s - %s", dl.dir, err)
 	}
 	return nil
 
