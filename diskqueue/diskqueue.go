@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -12,8 +13,6 @@ import (
 	"path"
 	"sync"
 	"time"
-
-	"github.com/impact-eintr/esq/internal/lg"
 )
 
 /*队列的特征是先入先出，也就是写入是从后面写入，读取是从前面读取
@@ -77,12 +76,12 @@ type diskQueue struct {
 	exitCh          chan int
 	exitSyncCh      chan int
 
-	logf lg.LogFunc
+	logf LogFunc
 }
 
 func New(name string, dataPath string, maxBytesPerFile int64,
 	minMsgSize int32, maxMsgSize int32,
-	syncEvery int64, syncTimeout time.Duration, logf lg.LogFunc) Interface {
+	syncEvery int64, syncTimeout time.Duration, logf LogFunc) Interface {
 	d := diskQueue{
 		name:            name,
 		dataPath:        dataPath,
@@ -101,10 +100,11 @@ func New(name string, dataPath string, maxBytesPerFile int64,
 		syncTimeout:     syncTimeout,
 		logf:            logf,
 	}
-	// 读取队列数据
+
+	// 读取队列数据 这里不需要锁 该实例现阶段不对外开放
 	err := d.retrieveMetaData()
 	if err != nil && !os.IsNotExist(err) {
-		d.logf(lg.ERROR, "DISKQUEU(%s) faild to retrieveMetaData - %s", d.name, err)
+		d.logf(ERROR, "DISKQUEU(%s) faild to retrieveMetaData - %s", d.name, err)
 	}
 
 	go d.ioLoop()
@@ -112,30 +112,83 @@ func New(name string, dataPath string, maxBytesPerFile int64,
 
 }
 
-func (d *diskQueue) Depth() int64 {
+func (d *diskQueue) exit(deleted bool) error {
+	d.Lock()
+	defer d.Unlock()
 
+	d.exitFlag = 1
+	if deleted {
+		d.logf(INFO, "DISKQUEUE[%s]: deleting", d.name)
+	} else {
+		d.logf(INFO, "DISKQUEUE[%s]: closing", d.name)
+	}
+
+	close(d.exitCh)
+
+	if d.readFile != nil {
+		d.readFile.Close()
+		d.readFile = nil
+	}
+
+	if d.writeFile != nil {
+		d.writeFile.Close()
+		d.writeFile = nil
+	}
+	return nil
+
+}
+
+func (d *diskQueue) Depth() int64 {
+	depth, ok := <-d.depthCh
+	if !ok {
+		depth = d.depth
+	}
+	return depth
 }
 
 func (d *diskQueue) Put(data []byte) error {
+	d.RLock()
+	defer d.RUnlock()
 
+	if d.exitFlag == 1 {
+		return errors.New("exiting")
+	}
+	d.writeCh <- data // 写数据
+	return <-d.writeResponseCh
 }
 
 func (d *diskQueue) Close() error {
-
+	err := d.exit(false)
+	if err != nil {
+		return err
+	}
+	return d.sync()
 }
 
 func (d *diskQueue) Delete() error {
-
+	return d.exit(true)
 }
 
 func (d *diskQueue) Empty() error {
+	d.RLock()
+	defer d.RUnlock()
 
+	if d.exitFlag == 1 {
+		return errors.New("exiting")
+	}
+
+	d.logf(INFO, "DISKQUEUE[%s]: emptying", d.name)
+	d.emptyCh <- 1
+	return <-d.emptyResponseCh
 }
 
 func (d *diskQueue) ReadChan() <-chan []byte {
-
+	return d.readCh
 }
 
+// 恢复元数据
+// 包括 d.depth d.readFileNum d.readPos d.writeFileNum d.writePos
+// d.nextReadFileNum d.nextReadPos
 func (d *diskQueue) retrieveMetaData() error {
 	var f *os.File
 	var err error
@@ -173,7 +226,7 @@ func (d *diskQueue) retrieveMetaData() error {
 	}
 	fileSize := fileInfo.Size()
 	if d.writePos < fileSize {
-		d.logf(lg.WARN, "DISKQUEUE[%s] %s metadata writePos %d size of %d, skiping to new file",
+		d.logf(WARN, "DISKQUEUE[%s] %s metadata writePos %d size of %d, skiping to new file",
 			d.name, fileName, d.writePos, fileSize)
 		d.writeFileNum += 1
 		d.writePos = 0
@@ -185,6 +238,10 @@ func (d *diskQueue) retrieveMetaData() error {
 	return nil
 }
 
+// 这个函数是一个“守护”协程，
+// 暴露的 d.writeChan 和 d.readChan
+// 如果外部有往 writeChan 里写数据在这里处理
+// 同时，这里的消息也会通过 d.readChan 将消息不断的从队列中往外推
 func (d *diskQueue) ioLoop() {
 	var dataRead []byte
 	var err error
@@ -203,7 +260,7 @@ func (d *diskQueue) ioLoop() {
 		if d.needSync {
 			err = d.sync()
 			if err != nil {
-				d.logf(lg.ERROR, "DISKQUEUE[%s] failed to sync - %s", d.name, err)
+				d.logf(ERROR, "DISKQUEUE[%s] failed to sync - %s", d.name, err)
 			}
 			// 同步到磁盘成功 将count 重置为0
 			count = 0
@@ -216,23 +273,22 @@ func (d *diskQueue) ioLoop() {
 			if d.nextReadPos == d.readPos {
 				dataRead, err = d.readOne()
 				if err != nil {
-					d.logf(lg.ERROR, "DISKQUEUE(%s) reading at %d of %s - %s",
+					d.logf(ERROR, "DISKQUEUE(%s) reading at %d of %s - %s",
 						d.name, d.readPos, d.fileName(d.readFileNum), err)
 					d.handleReadError()
 					continue
 				}
-				// 这里读取的数据放到readCh这个channel中
-				// 而且只有在有数据要读时才将r设置为d.readChan
-				r = d.readCh
-			} else {
-				r = nil // channel 规范规定跳过select中的nil通道操作（读或写），
 			}
+			// 这里读取的数据放到readCh这个channel中
+			// 而且只有在有数据要读时才将r设置为d.readChan
+			r = d.readCh
+		} else {
+			r = nil // channel 规范规定跳过select中的nil通道操作（读或写），
 		}
 
 		select {
 		case r <- dataRead: // dataRead 是 []byte
 			count++
-			log.Println("case r <- dataRead : count = ", count)
 			d.moveForward()
 		case d.depthCh <- d.depth:
 		case <-d.emptyCh:
@@ -253,7 +309,7 @@ func (d *diskQueue) ioLoop() {
 		}
 	}
 exit:
-	d.logf(lg.INFO, "DISKQUEUE(%s): closeing ... ioLoop", d.name)
+	d.logf(INFO, "DISKQUEUE(%s): closing ... ioLoop", d.name)
 	syncTicker.Stop()
 	d.exitSyncCh <- 1
 
@@ -327,7 +383,7 @@ func (d *diskQueue) readOne() ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		d.logf(lg.INFO, "DISKQUEUE(%s): readOne() opened %s", d.name, curFileName)
+		d.logf(INFO, "DISKQUEUE(%s): readOne() opened %s", d.name, curFileName)
 
 		// 当前队列头在当前读取文件的位置
 		if d.readPos > 0 {
@@ -343,7 +399,8 @@ func (d *diskQueue) readOne() ([]byte, error) {
 		if d.readFileNum < d.writeFileNum {
 			stat, err := d.readFile.Stat()
 			if err == nil {
-				d.maxBytesPerFileRead = stat.Size() // 确定最大读取值
+				log.Println(stat.Size())
+				d.maxBytesPerFileRead = stat.Size() // 确定最大读取值为当前不完整文件的大小
 			}
 		}
 		d.reader = bufio.NewReader(d.readFile)
@@ -376,8 +433,8 @@ func (d *diskQueue) readOne() ([]byte, error) {
 	d.nextReadPos = d.readPos + totalBytes
 	d.nextReadFileNum = d.readFileNum
 
-	// 我们仅在读取“完整”文件时才考虑旋转，
-	// 并且由于我们无法知道旋转的大小，
+	// 我们仅在读取“完整”文件时才循环读，
+	// 并且由于我们无法知道循环读的次数，
 	// 因此依赖 maxBytesPerFileRead 而不是 maxBytesPerFile
 	if d.readFileNum < d.writeFileNum && d.nextReadPos >= d.maxBytesPerFileRead {
 		if d.readFile != nil {
@@ -406,12 +463,12 @@ func (d *diskQueue) handleReadError() {
 	badFn := d.fileName(d.readFileNum)
 	badRenameFn := badFn + ".bad"
 
-	d.logf(lg.WARN, "DISKQUEUE(%s) jump to next file and saving bad file %s as %s",
+	d.logf(WARN, "DISKQUEUE(%s) jump to next file and saving bad file %s as %s",
 		d.name, badFn, badRenameFn)
 
 	err := os.Rename(badFn, badRenameFn)
 	if err != nil {
-		d.logf(lg.ERROR, "DISKQUEUE(%s) failed to rename bad diskqueue file %s to %s",
+		d.logf(ERROR, "DISKQUEUE(%s) failed to rename bad diskqueue file %s to %s",
 			d.name, badFn, badRenameFn)
 	}
 
@@ -429,19 +486,54 @@ func (d *diskQueue) moveForward() {
 	oldReadNum := d.readFileNum
 	d.readFileNum = d.nextReadFileNum
 	d.readPos = d.nextReadPos
-	d.depth--
+	d.depth -= 1
 
 	// 检查是否需要清除旧文件
 	if oldReadNum != d.nextReadFileNum {
 		d.needSync = true
 
-		fn := d.fileName(oldReadNum)
-		err := os.Remove(fn)
+		dn := d.fileName(oldReadNum)
+		err := os.Remove(dn)
 		if err != nil {
-			d.logf(lg.ERROR, "DISKQUEUE(%s) failed to Remove(%s) - %s", d.name, dn, err)
+			d.logf(ERROR, "DISKQUEUE(%s) failed to Remove(%s) - %s", d.name, dn, err)
 		}
 	}
 	d.checkTailCorruption(d.depth)
+}
+
+// 检测尾部数据损毁
+func (d *diskQueue) checkTailCorruption(depth int64) {
+	if d.readFileNum < d.writeFileNum || d.readPos < d.writePos {
+		return
+	}
+
+	if depth != 0 {
+		if depth < 0 {
+			d.logf(ERROR, "DISKQUEUE[%s] metadata 损坏 depth(%d) < 0, 重置为 0", d.name, d.depth)
+		} else if depth > 0 {
+			d.logf(ERROR, "DISKQUEUE[%s] metadata 损坏 depth(%d) > 0, 重置为 0", d.name, d.depth)
+		}
+		d.depth = 0
+		d.needSync = true
+	}
+
+	if d.readFileNum != d.writeFileNum || d.readPos != d.writePos {
+		if d.readFileNum > d.writeFileNum {
+			d.logf(ERROR,
+				"DISKQUEUE(%s) readFileNum > writeFileNum (%d > %d), corruption,skipping to next writeFileNum and resetting 0...",
+				d.name, d.readFileNum, d.writeFileNum)
+		}
+
+		if d.readPos > d.writePos {
+			d.logf(ERROR,
+				"DISKQUEUE(%s) readPos > writePos (%d > %d), corruption, skipping to next writeFileNum and resetting 0...",
+				d.name, d.readPos, d.writePos)
+		}
+
+		d.skipToNextRWFile()
+		d.needSync = true
+	}
+
 }
 
 func (d *diskQueue) deleteAllFiles() error {
@@ -451,6 +543,39 @@ func (d *diskQueue) deleteAllFiles() error {
 	if innerErr != nil && !os.IsNotExist(innerErr) {
 		return innerErr
 	}
+	return err
+
+}
+
+func (d *diskQueue) skipToNextRWFile() error {
+	var err error
+
+	if d.readFile != nil {
+		d.readFile.Close()
+		d.readFile = nil
+	}
+
+	if d.writeFile != nil {
+		d.writeFile.Close()
+		d.writeFile = nil
+	}
+	log.Printf("readFileNum %d writeFileNum %d\n", d.readFileNum, d.writeFileNum)
+	for i := d.readFileNum; i <= d.writeFileNum; i++ {
+		fn := d.fileName(i)
+		innerErr := os.Remove(fn)
+		if innerErr != nil && !os.IsNotExist(innerErr) {
+			d.logf(ERROR, "DISKQUEUE[%s] failed to remove metadata file - %s", d.name, innerErr)
+			err = innerErr
+		}
+	}
+	d.writeFileNum++
+	d.writePos = 0
+	d.readFileNum = d.writeFileNum
+	d.readPos = 0
+	d.nextReadFileNum = d.writeFileNum
+	d.nextReadPos = 0
+	d.depth = 0
+
 	return err
 
 }
@@ -466,9 +591,10 @@ func (d *diskQueue) writeOne(data []byte) error {
 			return nil
 		}
 
-		d.logf(lg.INFO, "DISKQUEUE[%s]: writeOne() opened %d", d.name, curFileName)
+		d.logf(INFO, "DISKQUEUE[%s]: writeOne() opened %s", d.name, curFileName)
 
 		// 如果当前写入位置大于0 则将文件位置移动到写入位置点
+
 		if d.writePos > 0 {
 			_, err = d.writeFile.Seek(d.writePos, 0)
 			if err != nil {
@@ -515,16 +641,19 @@ func (d *diskQueue) writeOne(data []byte) error {
 
 	//如果写入位置大于了文件最大大小
 	if d.writePos >= d.maxBytesPerFile {
+		if d.readFileNum == d.writeFileNum {
+			d.maxBytesPerFileRead = d.writePos
+		}
+
 		//将当前写入文件+1
 		d.writeFileNum++
 		//当前写入位置重置为0
 		d.writePos = 0
 
-		// sync every time we start writing to a new file
-		//将缓存数据写入到磁盘
+		// 写完一个完整文件后 将缓存数据写入到磁盘
 		err = d.sync()
 		if err != nil {
-			d.logf(lg.ERROR, "DISKQUEUE[%s] failed to sync - %s", d.name, err)
+			d.logf(ERROR, "DISKQUEUE[%s] failed to sync - %s", d.name, err)
 		}
 
 		if d.writeFile != nil {
@@ -532,6 +661,6 @@ func (d *diskQueue) writeOne(data []byte) error {
 			d.writeFile = nil
 		}
 	}
-
 	return err
+
 }
