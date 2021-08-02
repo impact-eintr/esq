@@ -122,7 +122,7 @@ func (e *ESQD) Main() error {
 
 	// 确保所有的gouroutine都运行完毕
 	// 建立tcpSerrver
-	tcpServer := &serverServer{ctx: ctx}
+	tcpServer := &tcpServer{ctx: ctx}
 	e.waitGroup.Wrap(func() {
 		exitFunc(protocol.TCPServer(e.tcpListener, tcpServer, e.logf))
 	})
@@ -151,6 +151,141 @@ func (e *ESQD) getOpts() *Options {
 
 func (e *ESQD) swapOpts(opts *Options) {
 	e.opts.Store(opts)
+}
+
+func (e *ESQD) queueScanLoop() {
+	workCh := make(chan *Channel, e.getOpts().QueueScanSelectionCount)
+	responseCh := make(chan bool, e.getOpts().QueueScanSelectionCount)
+	closeCh := make(chan int)
+
+	// 定时执行loop的间隔时间，默认100ms
+	workTicker := time.NewTicker(e.getOpts().QueueScanInterval)
+	// 刷新channel数量，重新调整协程池，默认时间是5s刷新一次
+	refreshTicker := time.NewTicker(e.getOpts().QueueScanRefreshInterval)
+
+	channels := e.channels()
+	e.resizePool(len(channels), workCh, responseCh, closeCh)
+
+	for {
+		select {
+		case <-workTicker.C:
+			// 定时执行loop的间隔时间，默认100ms
+			if len(channels) == 0 {
+				continue
+			}
+		case <-refreshTicker.C:
+			// 刷新channel数量，重新调整协程池，当协程池容量足够是会开启新的goroutine
+			channels = e.channels()
+			e.resizePool(len(channels), workCh, responseCh, closeCh)
+			continue
+		case <-e.exitCh:
+			goto exit
+		}
+
+		num := e.getOpts().QueueScanSelectionCount
+		if num > len(channels) {
+			num = len(channels)
+		}
+
+	loop:
+		//从 channels 中随机选择 num 个 channel
+		for _, i := range util.UniqRands(num, len(channels)) {
+			workCh <- channels[i]
+		}
+
+		//等待处理响应，记录失败次数
+		numDirty := 0
+		for i := 0; i < num; i++ {
+			if <-responseCh {
+				numDirty++
+			}
+		}
+
+		//queueScanLoop的处理方法模仿了Redis的概率到期算法
+		//(probabilistic expiration algorithm)，
+		//每过一个QueueScanInterval(默认100ms)间隔，进行一次概率选择，
+		//从所有的channel缓存中随机选择QueueScanSelectionCount(默认20)个channel，
+		//如果某个被选中channel存在InFlighting消息或者Deferred消息，
+		//则认为该channel为“脏”channel。
+		//如果被选中channel中“脏”channel的比例大于QueueScanDirtyPercent(默认25%)，
+		//则不投入睡眠，直接进行下一次概率选择
+		if float64(numDirty)/float64(num) > e.getOpts().QueueScanDirtyPercent {
+			goto loop
+		}
+	}
+
+exit:
+	e.logf(LOG_INFO, "QUEUESCAN: closing")
+	close(closeCh)
+	workTicker.Stop()
+	refreshTicker.Stop()
+}
+
+func (e *ESQD) channels() []*Channel {
+	var channels []*Channel
+	e.RLock()
+	for _, t := range e.topicMap {
+		t.RLock()
+		for _, c := range t.channelMap {
+			channels = append(channels, c)
+		}
+		t.RUnlock()
+	}
+	e.RUnlock()
+	return channels
+}
+
+// 协程池调整
+func (e *ESQD) resizePool(num int, workCh chan *channel,
+	responseCh chan bool, closeCh chan int) {
+	// 协程池大小 = 总channel数 / 4
+	idealPoolSize := int(float64(num) * 0.25)
+	if idealPoolSize < 1 {
+		idealPoolSize = 1
+	} else if idealPoolSize > e.getOpts().QueueScanWorkerPoolMax {
+		// idealPoolSize 协程池大小 最大默认是4个
+		idealPoolSize = e.getOpts().QueueScanWorkerPoolMax
+	}
+
+	for {
+		if idealPoolSize == e.poolSize {
+			break
+		} else if idealPoolSize < e.poolSize {
+			// 协程池协程容量 < 当前已经开启的协程数量
+			// 说明开启的协程过多 需要关闭协程
+			// closeCh queueScanWorker 会中断 "守护"协程
+			// 关闭后 将当前开启的协程数量-1
+			closeCh <- 1
+			e.poolSize--
+		} else {
+			e.waitGroup.Wrap(func() {
+				e.queueScanWorker(workCh, responseCh, closeCh)
+			})
+			e.poolSize++
+		}
+	}
+}
+
+func (e *ESQD) queueScanWorker(workCh chan *Channel,
+	responseCh chan bool, closeCh chan int) {
+	for {
+		select {
+		case c := <-workCh:
+			// 处理一次某个channel的消息
+			now := time.Now().UnixNano()
+			dirty := false
+			if c.processInFlightQueue(now) {
+				dirty = true
+			}
+			if c.processDeferredQueue(now) {
+				dirty = true
+			}
+			// 如果这个
+			responseCh <- dirty
+		case <-closeCh:
+			return
+		}
+	}
 }
 
 // 通知lookuploop topic和channel的更改

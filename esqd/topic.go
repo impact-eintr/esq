@@ -5,10 +5,12 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/impact-eintr/esq/diskqueue"
 	"github.com/impact-eintr/esq/internal/lg"
 	"github.com/impact-eintr/esq/internal/util"
 )
 
+// Topic 订阅主题
 // 生产者发布的逻辑key
 type Topic struct {
 	msgCount uint64 // topic中的消息数量
@@ -55,16 +57,25 @@ func NewTopic(topicName string, ctx *context, deleteCaback func(*Topic)) *Topic 
 
 	if strings.HasPrefix(topicName, "#temp") {
 		t.tempFlag = true
-		t.backend = newDummyBackendQueue()
+		t.backend = newDummyBackendQueue() // 临时队列不会落盘
 	} else {
-		dqLogf := func(level diskqueue.LoLevel, f string, args ...interface{}) {
+		dqLogf := func(level diskqueue.LogLevel, f string, args ...interface{}) {
 			opts := ctx.esqd.getOpts()
 			lg.Logf(opts.Logger, opts.LogLevel, opts.LogLevel, f, args...)
 		}
 
 		// diskqueue 里面会维护一个读写文件的ioLoop
 		// 这里面会接受一条消息并写到文件或者从文件中读取一条消息并投送出去
-		t.backend = diskqueue.New()
+		t.backend = diskqueue.New(
+			topicName,
+			ctx.esqd.getOpts().DataPath,
+			ctx.esqd.getOpts().MaxBytesPerFile,
+			int32(minValidMsgSize),
+			int32(ctx.esqd.getOpts().MaxMsgSize)+minValidMsgSize,
+			ctx.esqd.getOpts().SyncEvery,
+			ctx.esqd.getOpts().SyncTimeout,
+			dqLogf,
+		)
 	}
 
 	t.waitGroup.Wrap(t.messagePump)
@@ -107,6 +118,7 @@ func (t *Topic) messagePump() {
 	var memMsgCh chan *Message
 	var backendCh chan []byte
 
+	// 这里要等到startCh完成后才能往下走
 	for {
 		select {
 		case <-t.channelUpdateCh:
@@ -116,13 +128,15 @@ func (t *Topic) messagePump() {
 		case <-t.exitCh:
 			goto exit
 		case <-t.startCh:
+			// 也就是要等到topic执行完getChannel()后才会接着往下走
 		}
 		break
 	}
 
 	t.RLock()
+	// 将所有channel通道放到chans中
 	for _, c := range t.channelMap {
-		chans = append(chans, c) // 复制
+		chans = append(chans, c)
 	}
 	t.RUnlock()
 
@@ -136,13 +150,16 @@ func (t *Topic) messagePump() {
 		select { // 使用select 监听两个chan是否有消息传入
 		// 消息已经被写入磁盘的话 nsq的消费消息就是无序的 因为select的选择就是无序的
 		case msg = <-memMsgCh:
+			// 如果topic有收到消息
 		case buf = <-backendCh:
+			// 而如果消息是从dickqueue中传过来的 还要解码反序列化成msg
 			msg, err = decodeMessage(buf)
 			if err != nil {
 				t.ctx.esqd.logf(LOG_ERROR, "failed to decode message - %s", err)
 				continue
 			}
 		case <-t.channelUpdateCh: // 当channel信息更新后 重新设置chan
+			// 如果有新的channel
 			chans = chans[:0]
 			t.RLock()
 			for _, c := range t.channelMap {
@@ -170,6 +187,7 @@ func (t *Topic) messagePump() {
 			goto exit
 		}
 
+		// 遍历每一个channel通道 将消息投送出去
 		for i, channel := range chans {
 			chanMsg := msg // 复制消息
 
@@ -179,10 +197,12 @@ func (t *Topic) messagePump() {
 				chanMsg.deferred = msg.deferred
 			}
 
-			if chanMsg.deferred != 0 { // 延迟消息未到时间不发送
+			if chanMsg.deferred != 0 {
+				// 如果是延时消息则将延时消息丢给延时channel
 				channel.PutMessageDeferred(chanMsg, chanMsg.deferred)
 				continue
 			}
+			// 否则正常提交消息
 			err := channel.PutMessage(chanMsg)
 			if err != nil {
 				t.ctx.esqd.logf(LOG_ERROR,

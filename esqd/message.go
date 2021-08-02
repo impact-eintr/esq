@@ -24,7 +24,7 @@ type Message struct {
 	deliveryTS time.Time     // 发送的时间 delivery 交付
 	clientID   int64         // 被消费的consume
 	pri        int64         // 消息的timout时间
-	indeex     int           // 在queue中的index
+	index      int           // 在queue中的index
 	deferred   time.Duration // 消息的延迟发送时间
 }
 
@@ -84,7 +84,7 @@ func decodeMessage(b []byte) (*Message, error) {
 
 }
 
-func writeMessaeToBackend(buf *bytes.Buffer, msg *Message, bq BackendQueue) error {
+func writeMessageToBackend(buf *bytes.Buffer, msg *Message, bq BackendQueue) error {
 	buf.Reset()
 	_, err := msg.WriteTo(buf)
 	if err != nil {
