@@ -34,7 +34,8 @@ func (pq *inFlightPqueue) Pop() *Message {
 	c := cap(*pq)
 	pq.Swap(0, n-1) // 交换堆顶元素与堆底元素
 	pq.down(0, n-1) // 向下调整
-	if n < (c/2) && c > 25 {
+	if n < (c / 2)&&c > 25{
+		npq := make(inFlightPqueue)
 	}
 	//删除堆底元素
 	x := (*pq)[n-1]
