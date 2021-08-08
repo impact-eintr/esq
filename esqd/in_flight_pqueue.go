@@ -35,10 +35,15 @@ func (pq *inFlightPqueue) Pop() *Message {
 	pq.Swap(0, n-1) // 交换堆顶元素与堆底元素
 	pq.down(0, n-1) // 向下调整
 	if n < (c/2) && c > 25 {
+		npq := make(inFlightPqueue, n, c/2)
+		copy(npq, *pq)
+		*pq = npq
 	}
 	//删除堆底元素
 	x := (*pq)[n-1]
 	x.index = -1
+	*pq = (*pq)[:n-1]
+	return x
 }
 
 // 向上调整指定节点
@@ -55,5 +60,19 @@ func (pq *inFlightPqueue) up(j int) {
 
 // 向下调整指定节点
 func (pq *inFlightPqueue) down(i, n int) {
-
+	for {
+		j1 := 2*i + 1          // 左孩子
+		if j1 >= n || j1 < 0 { // j1已经是叶子节点了
+			break
+		}
+		j := j1
+		if j2 := j1 + 1; j2 < n && (*pq)[j1].pri >= (*pq)[j2].pri {
+			j = j2 // 右孩子
+		}
+		if (*pq)[j].pri >= (*pq)[i].pri {
+			break // 如果父节点比孩子节点小 则不交换
+		}
+		pq.Swap(i, j)
+		i = j
+	}
 }
