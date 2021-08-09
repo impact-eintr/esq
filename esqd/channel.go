@@ -1,10 +1,12 @@
 package esqd
 
 import (
+	"errors"
 	"sync"
 	"sync/atomic"
 
 	"github.com/impact-eintr/esq/internal/lg"
+	"github.com/impact-eintr/esq/internal/pqueue"
 )
 
 // 消费者
@@ -27,7 +29,7 @@ type Consumer interface {
 type Channel struct {
 	requeueCount uint64 // 重新发送的消息数量
 	messageCount uint64 // channel中的消息总数
-	timeoutCount  uint64 // 发送超时的消息数量
+	timeoutCount uint64 // 发送超时的消息数量
 
 	sync.RWMutex
 
@@ -90,7 +92,7 @@ func (c *Channel) processInFlightQueue(t int64) bool {
 	dirty := false
 	for {
 		c.inFlightMutex.Lock()
-		msg, _ := c.inFlightPQ.PeekAndShitf(t)
+		msg, _ := c.inFlightPQ.PeekAndShift(t)
 		c.inFlightMutex.Unlock()
 
 		if msg == nil {
@@ -98,7 +100,7 @@ func (c *Channel) processInFlightQueue(t int64) bool {
 		}
 		// 只要有消息这个通道就是脏的
 		dirty = true
-		_, err : c.popInFlightMseeage(msg.clientID, msg.ID)
+		_, err := c.popInFlightMessage(msg.clientID, msg.ID)
 		if err != nil {
 			goto exit
 		}
@@ -118,6 +120,22 @@ exit:
 	return dirty
 }
 
+func (c *Channel) popInFlightMessage(clientID int64, id MessageID) (*Message, error) {
+	c.inFlightMutex.Lock()
+	msg, ok := c.inFlightMessages[id]
+	if !ok {
+		c.inFlightMutex.Unlock()
+		return nil, errors.New("ID nit in flight")
+	}
+	if msg.clientID != clientID {
+		c.inFlightMutex.Unlock()
+		return nil, errors.New("client does not own message")
+	}
+	delete(c.inFlightMessages, id)
+	c.inFlightMutex.Unlock()
+	return msg, nil
+
+}
 
 func (c *Channel) processDeferredQueue(t int64) bool {
 	c.exitMutex.RLock()
@@ -151,9 +169,10 @@ func (c *Channel) processDeferredQueue(t int64) bool {
 exit:
 	return dirty
 }
+
 func (c *Channel) put(m *Message) error {
 	select {
-	case c.memoryMsgCh <- m:
+	case c.memMsgCh <- m:
 		//将消息写入到memoryMsgChan中去
 	default:
 		//如果memoryMsgChan满了则将消息写到磁盘中区

@@ -174,7 +174,7 @@ func (e *ESQD) queueScanLoop() {
 				continue
 			}
 		case <-refreshTicker.C:
-			// 刷新channel数量，重新调整协程池，当协程池容量足够是会开启新的goroutine
+			// 刷新channel数量，重新调整协程池，当协程池容量足够时会开启新的goroutine
 			channels = e.channels()
 			e.resizePool(len(channels), workCh, responseCh, closeCh)
 			continue

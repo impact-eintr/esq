@@ -46,6 +46,37 @@ func (pq *inFlightPqueue) Pop() *Message {
 	return x
 }
 
+// 删除堆中位置为i的元素 返回被删除的元素
+func (pq *inFlightPqueue) Remove(i int) *Message {
+	n := len(*pq)
+	if n-1 != i {
+		pq.Swap(i, n-1) // 用最后的元素替换目标元素
+		// 当前元素大于父节点 向下筛选
+		pq.down(i, n-1)
+		// 当前元素小于父节点 向上筛选
+		pq.up(i)
+	}
+	x := (*pq)[n-1]
+	x.index = -1
+	*pq = (*pq)[:n-1]
+	return x
+}
+
+// 查看堆顶元素
+func (pq *inFlightPqueue) PeekAndShift(max int64) (*Message, int64) {
+	if len(*pq) == 0 {
+		return nil, 0
+	}
+
+	x := (*pq)[0]
+	if x.pri > max {
+		return nil, x.pri - max
+	}
+	pq.Pop()
+
+	return x, 0
+}
+
 // 向上调整指定节点
 func (pq *inFlightPqueue) up(j int) {
 	for {
