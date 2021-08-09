@@ -3,6 +3,15 @@ package esqd
 // esqd 的逻辑
 // Producer --> 消息 --> topic --> channels --> Consumer
 
+//一个完整的消息进出流程大概就是这样子
+//客户端生产者 -> protocolV2.IOLoop() 收到消息
+//-> Topic.PutMessage() 消息传到 Topic
+//-> Topic.MessagePump() 消息传到 Channel.InFlight
+//-> nsqd.queueScanLoop()
+//-> 消息传到 Channel.memoryMsgChan
+//-> protocolV2.messagePump()
+//-> 客户端订阅者
+
 import (
 	"log"
 	"net"
@@ -13,6 +22,7 @@ import (
 
 	"github.com/impact-eintr/esq/internal/dirlock"
 	"github.com/impact-eintr/esq/internal/http_api"
+	"github.com/impact-eintr/esq/internal/protocol"
 	"github.com/impact-eintr/esq/internal/util"
 )
 

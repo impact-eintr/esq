@@ -37,10 +37,11 @@ type Channel struct {
 	name      string // channel名
 	ctx       *context
 
+	//这一块是存储和持久化，消息最终是从这里出去
 	backend BackendQueue // 磁盘队列
-
-	memMsgCh chan *Message // channel的消息管道
 	// 这是存放消息的内存 默认配置10000的长度 超过后就会落盘
+	memMsgCh chan *Message // channel的消息管道
+
 	exitFlag  int32 // 准备退出
 	exitMutex sync.RWMutex
 
@@ -54,8 +55,9 @@ type Channel struct {
 	// Stats tracking
 	e2eProcessingLatencyStream *quantile.Quantile
 
+	// 这一块可以理解成一个缓存，意思在处理中消息，消息首先到这里
+
 	// 延迟消息存放的地方，其中 deferredPQ，是一个优先级管理的队列，直接丢在内存
-	// TODO: these can be DRYd up
 	deferredMessages map[MessageID]*pqueue.Item
 	deferredPQ       pqueue.PriorityQueue
 	deferredMutex    sync.Mutex
@@ -170,6 +172,18 @@ exit:
 	return dirty
 }
 
+func (c *Channel) popDeferredMessage(id MessageID) (*pqueue.Item, error) {
+	c.deferredMutex.Lock()
+	item, ok := c.deferredMessages[id]
+	if !ok {
+		c.deferredMutex.Unlock()
+		return nil, errors.New("ID nit in flight")
+	}
+	delete(c.deferredMessages, id)
+	c.deferredMutex.Unlock()
+	return item, nil
+}
+
 func (c *Channel) put(m *Message) error {
 	select {
 	case c.memMsgCh <- m:
@@ -190,5 +204,5 @@ func (c *Channel) put(m *Message) error {
 }
 
 func (c *Channel) Exiting() bool {
-
+	return atomic.LoadInt32(&c.exitFlag) == 1
 }
