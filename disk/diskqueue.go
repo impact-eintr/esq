@@ -102,3 +102,63 @@ type diskQueue struct {
 	// log function
 	logf AppLogFunc
 }
+
+// TODO 使得 diskQueue成为一个Interface
+func (d *diskQueue) Put([]byte) error
+func (d *diskQueue) ReadChan() chan []byte
+func (d *diskQueue) Close() error
+func (d *diskQueue) Delete() error
+func (d *diskQueue) Depth() int64
+func (d *diskQueue) Empty() error
+
+// 新的磁盘队列实例 New(...)
+// Input:
+// name             名字
+// dataPath         文件保存目录
+// maxBytesPerFile  每个文件最大尺寸
+// minMsgSize       消息最小长度
+// maxMsgSize       消息最大长度
+// syncEvery        同步数
+// syncTimeout      同步间隔
+// logf             日志函数
+func New(name string, dataPath string, maxBytesPerFile int64,
+	minMsgSize int32, maxMsgSize int32,
+	syncEvery int64, syncTimeout time.Duration, logf AppLogFunc) Interface {
+	d := diskQueue{
+		name:              name,
+		dataPath:          dataPath,
+		maxBytesPerFile:   maxBytesPerFile,
+		minMsgSize:        minMsgSize,
+		maxMsgSize:        maxMsgSize,
+		readChan:          make(chan []byte),
+		writeChan:         make(chan []byte),
+		writeResponseChan: make(chan error),
+		emptyChan:         make(chan int),
+		emptyResponseChan: make(chan error),
+		exitChan:          make(chan int),
+		exitSyncChan:      make(chan int),
+		syncEvery:         syncEvery,
+		syncTimeout:       syncTimeout,
+		logf:              logf,
+	}
+
+	// no need to lock here, nothing else could possibly be touching this instance(单例模式)
+	err := d.retrieveMetaData() // 从元数据中恢复出一条可用的diskqueue
+	if err != nil && !os.IsNotExist(err) {
+		d.logf(ERROR, "DISKQUEUE(%s) failed to retrieveMetaData - %s", d.name, err)
+	}
+
+	go d.ioLoop()
+	// 返回一个已经启动了相关机制的实例
+	return &d
+}
+
+// 从元数据中恢复出一条可用的diskqueue
+func (d *diskQueue) retrieveMetaData() error {
+	// TODO
+}
+
+// 启动diskqueue的io循环机制
+func (d *diskQueue) ioLoop() {
+	// TODO
+}
