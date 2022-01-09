@@ -1,4 +1,2 @@
-github.com/judwhite/go-svc v1.2.1 h1:a7fsJzYUa33sfDJRF2N/WXhA+LonCEEY8BJb1tuS5tA=
-github.com/judwhite/go-svc v1.2.1/go.mod h1:mo/P2JNX8C07ywpP9YtO2gnBgnUiFTHqtsZekJrUuTk=
-golang.org/x/sys v0.0.0-20210124154548-22da62e12c0c h1:VwygUrnw9jn88c4u8GD3rZQbqrP/tgas88tPUbBxQrk=
-golang.org/x/sys v0.0.0-20210124154548-22da62e12c0c/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
+github.com/impact-eintr/enet v1.1.0 h1:RHxAjQeUjDMNKJyyQC3IqBkdv4XYA+mthfke5koRDBg=
+github.com/impact-eintr/enet v1.1.0/go.mod h1:rLB8JOzFiR7xAHdhrt60/xufRO/O2E/zRliAMVuLRtM=

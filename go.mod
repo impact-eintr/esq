@@ -1,5 +1,5 @@
 module github.com/impact-eintr/esq
 
-go 1.16
+go 1.17
 
-require github.com/judwhite/go-svc v1.2.1 // indirect
+require github.com/impact-eintr/enet v1.1.0
