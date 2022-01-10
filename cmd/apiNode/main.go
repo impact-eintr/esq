@@ -21,8 +21,7 @@ type LocateRouter struct {
 }
 
 func (this *LocateRouter) Handle(req iface.IRequest) {
-	log.Println(string(req.GetData()))
-
+	log.Println("文件位于：", string(req.GetData()))
 }
 
 func main() {
@@ -43,7 +42,7 @@ func main() {
 			nodeMap := make(map[string]time.Time, 0)
 
 			//发封包message消息 只写一次
-			dp := enet.NewDataPack()
+			dp := enet.GetDataPack()
 			msg, _ := dp.Pack(enet.NewMsgPackage(10, []byte(topic_heartbeat+"\t"+"我经常帮助一些翘家的人")))
 			_, err = conn.Write(msg)
 			if err != nil {
@@ -88,8 +87,9 @@ func main() {
 	}()
 
 	go func() {
+		localHost := "127.0.0.1:6431"
 		time.Sleep(time.Second)
-		conn, err := net.Dial("tcp4", "127.0.0.1:6430")
+		conn, err := net.Dial("tcp4", "127.0.0.1:6430") // ESQ_SERVER
 		if err != nil {
 			fmt.Println("client start err ", err)
 			return
@@ -98,10 +98,11 @@ func main() {
 
 		for {
 			time.Sleep(2 * time.Second)
-			dp := enet.NewDataPack()
-			msg, _ := dp.Pack(enet.NewMsgPackage(0, []byte(topic_filereq+"\t"+"127.0.0.1:6431\n一份色图谢谢！这是文件名")))
+			dp := enet.GetDataPack()
+			msg := fmt.Sprintf("%s\t%s\n%s", topic_filereq, localHost, "涩图")
+			data, _ := dp.Pack(enet.NewMsgPackage(0, []byte(msg)))
 			//发封包message消息
-			_, err = conn.Write(msg)
+			_, err = conn.Write(data)
 			if err != nil {
 				fmt.Println("write error err ", err)
 				return
