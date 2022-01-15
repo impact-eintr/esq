@@ -10,7 +10,7 @@ type Pubfunc func(interface{})
 
 func Pub(topic string, pubmsg string, mc *mq.Client, cb Pubfunc) {
 	// 发布消息
-	err := mc.Publish(topic, pubmsg)
+	err := mc.Publish(topic, []byte(pubmsg))
 	if err != nil {
 		log.Println("publish message failed")
 	}

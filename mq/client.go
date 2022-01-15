@@ -1,28 +1,28 @@
 package mq
 
+import "time"
+
 type Client struct {
 	bro *BrokerImpl
 }
 
-func NewClient() *Client {
+func NewClient(dataPath string, maxBytesPerFile int64,
+	minMsgSize int32, maxMsgSize int32,
+	syncEvery int64, syncTimeout time.Duration) *Client {
 	return &Client{
-		bro: NewBroker(),
+		bro: NewBroker(dataPath, maxBytesPerFile, minMsgSize, maxMsgSize, syncEvery, syncTimeout),
 	}
 }
 
-func (c *Client) SetConditions(capacity int) {
-	c.bro.setConditions(capacity)
-}
-
-func (c *Client) Publish(topic string, msg interface{}) error {
+func (c *Client) Publish(topic string, msg []byte) error {
 	return c.bro.publish(topic, msg)
 }
 
-func (c *Client) Subscribe(topic string) (<-chan interface{}, error) {
+func (c *Client) Subscribe(topic string) (Interface, error) {
 	return c.bro.subscribe(topic)
 }
 
-func (c *Client) Unsubscribe(topic string, sub <-chan interface{}) error {
+func (c *Client) Unsubscribe(topic string, sub Interface) error {
 	return c.bro.unsubscribe(topic, sub)
 }
 
@@ -30,8 +30,8 @@ func (c *Client) Close() {
 	c.bro.close()
 }
 
-func (c *Client) GetPayLoad(sub <-chan interface{}) interface{} {
-	for val := range sub {
+func (c *Client) GetPayLoad(sub Interface) interface{} {
+	for val := range sub.ReadChan() {
 		if val != nil {
 			return val
 		}

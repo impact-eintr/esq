@@ -35,7 +35,7 @@ func main() {
 				fmt.Println("write error err ", err)
 				return
 			}
-			time.Sleep(1000 * time.Millisecond)
+			time.Sleep(time.Millisecond)
 		}
 	}()
 
@@ -126,7 +126,7 @@ func main() {
 				fmt.Println("write error err ", err)
 				return
 			}
-			time.Sleep(1000 * time.Millisecond)
+			time.Sleep(time.Millisecond)
 		}
 	}()
 

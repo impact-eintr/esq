@@ -3,6 +3,7 @@ package esq
 import (
 	"fmt"
 	"log"
+	"os"
 
 	"github.com/impact-eintr/esq/mq"
 )
@@ -21,12 +22,16 @@ func Sub(topic string, mc *mq.Client, cb Subfunc) {
 	for {
 		select {
 		case <-exitCh:
-			fmt.Println("Sub 退出")
+			if _, ok := os.LookupEnv("esq_debug"); ok {
+				fmt.Println("subscribe exiting")
+			}
 			return
 		default:
 			// 先看看消息是个啥
 			val := mc.GetPayLoad(ch)
-			fmt.Printf("get message is %s\n", val)
+			if _, ok := os.LookupEnv("esq_debug"); ok {
+				fmt.Printf("get message is %s\n", val)
+			}
 			// 有回调函数就调用
 			if cb != nil {
 				cb(val, exitCh)

@@ -2,35 +2,64 @@ package mq
 
 import (
 	"errors"
+	"fmt"
+	"log"
+	"math/rand"
 	"sync"
 	"time"
 )
 
 type Broker interface {
-	publish(topic string, msg interface{}) error
-	subscribe(topic string) (<-chan interface{}, error)
-	unsubscribe(topic string, sub <-chan interface{}) error
+	publish(topic string, msg []byte) error
+	subscribe(topic string) (Interface, error)
+	unsubscribe(topic string, sub Interface) error
 	close()
-	broadcast(msg interface{}, subscribers []chan interface{})
-	setConditions(capacity int)
+	broadcast(msg []byte, subscribers []Interface)
 }
 
+// TODO  当前这个实现是基于磁盘的 后续把内存的队列再加回来
 type BrokerImpl struct {
 	exit     chan bool
 	capacity int
-	topics   map[string][]chan interface{}
+	topics   map[string][]Interface
+	ioChan   chan []byte
 	sync.RWMutex
+
+	// diskQueue config
+	name            string
+	dataPath        string
+	maxBytesPerFile int64
+	minMsgSize      int32
+	maxMsgSize      int32
+	syncEvery       int64
+	syncTimeout     time.Duration
+	logFunc         LogFunc
 }
 
-func NewBroker() *BrokerImpl {
+func NewBroker(dataPath string, maxBytesPerFile int64,
+	minMsgSize int32, maxMsgSize int32,
+	syncEvery int64, syncTimeout time.Duration) *BrokerImpl {
 	return &BrokerImpl{
+		dataPath:        dataPath,
+		maxBytesPerFile: maxBytesPerFile,
+		minMsgSize:      minMsgSize,
+		maxMsgSize:      maxMsgSize,
+		syncEvery:       syncEvery,
+		syncTimeout:     syncTimeout,
+		logFunc: func(l LogLevel, f string, args ...interface{}) {
+			// TODO 根据环境变量判断是否开启除ERROR FATAL 以外的消息通知
+			log.SetPrefix(fmt.Sprintf("%s\t", l.String()))
+			log.Printf(f, args...)
+		},
+
 		exit:   make(chan bool),
-		topics: make(map[string][]chan interface{}),
+		topics: make(map[string][]Interface),
+		ioChan: make(chan []byte, 1),
 	}
 }
 
 // 进行消息的推送，有两个参数即topic、msg，分别是订阅的主题、要传递的消息
-func (b *BrokerImpl) publish(topic string, pubmsg interface{}) error {
+func (b *BrokerImpl) publish(topic string, pubmsg []byte) error {
 	select {
 	case <-b.exit:
 		return errors.New("broker closed")
@@ -40,6 +69,7 @@ func (b *BrokerImpl) publish(topic string, pubmsg interface{}) error {
 	b.RLock()
 	subscribers, ok := b.topics[topic]
 	b.RUnlock()
+
 	if !ok {
 		return nil
 	}
@@ -49,22 +79,27 @@ func (b *BrokerImpl) publish(topic string, pubmsg interface{}) error {
 }
 
 // 消息的订阅，传入订阅的主题，即可完成订阅，并返回对应的channel通道用来接收数据
-func (b *BrokerImpl) subscribe(topic string) (<-chan interface{}, error) {
+func (b *BrokerImpl) subscribe(topic string) (Interface, error) {
 	select {
 	case <-b.exit:
 		return nil, errors.New("broker closed")
 	default:
 	}
 
-	ch := make(chan interface{}, b.capacity)
+	queue := New(fmt.Sprintf("%s_%d", topic, rand.Int()),
+		b.dataPath, b.maxBytesPerFile,
+		b.minMsgSize, b.maxMsgSize,
+		b.syncEvery, time.Second,
+		b.logFunc)
+
 	b.Lock()
-	b.topics[topic] = append(b.topics[topic], ch)
+	b.topics[topic] = append(b.topics[topic], queue)
 	b.Unlock()
-	return ch, nil
+	return queue, nil
 }
 
 // 取消订阅，传入订阅的主题和对应的通道
-func (b *BrokerImpl) unsubscribe(topic string, sub <-chan interface{}) error {
+func (b *BrokerImpl) unsubscribe(topic string, sub Interface) error {
 	select {
 	case <-b.exit:
 		return errors.New("broker closed")
@@ -79,7 +114,7 @@ func (b *BrokerImpl) unsubscribe(topic string, sub <-chan interface{}) error {
 	}
 
 	b.Lock()
-	var newSubs []chan interface{}
+	var newSubs []Interface
 	for _, subscriber := range subscribers {
 		if subscriber == sub {
 			continue
@@ -100,13 +135,14 @@ func (b *BrokerImpl) close() {
 	default:
 		close(b.exit)
 		b.Lock()
-		b.topics = make(map[string][]chan interface{})
+		// 这里是否应该调用Interface.Close()
+		b.topics = make(map[string][]Interface)
 		b.Unlock()
 	}
 }
 
 // 这个属于内部方法，作用是进行广播，对推送的消息进行广播，保证每一个订阅者都可以收到
-func (b *BrokerImpl) broadcast(msg interface{}, subscribers []chan interface{}) {
+func (b *BrokerImpl) broadcast(msg []byte, subscribers []Interface) {
 	count := len(subscribers)
 	concurrency := 1
 
@@ -121,7 +157,7 @@ func (b *BrokerImpl) broadcast(msg interface{}, subscribers []chan interface{}) 
 
 	pub := func(start int) {
 		//采用Timer 而不是使用time.After 原因：time.After会产生内存泄漏 在计时器触发之前，垃圾回收器不会回收Timer
-		idleDuration := 5 * time.Millisecond
+		idleDuration := 10 * time.Millisecond
 		idleTimeout := time.NewTimer(idleDuration)
 		defer idleTimeout.Stop()
 		for j := start; j < count; j += concurrency {
@@ -133,7 +169,8 @@ func (b *BrokerImpl) broadcast(msg interface{}, subscribers []chan interface{}) 
 			}
 			idleTimeout.Reset(idleDuration)
 			select {
-			case subscribers[j] <- msg:
+			case b.ioChan <- msg:
+				subscribers[j].Put(<-b.ioChan)
 			case <-idleTimeout.C:
 			case <-b.exit:
 				return
@@ -144,9 +181,4 @@ func (b *BrokerImpl) broadcast(msg interface{}, subscribers []chan interface{}) 
 	for i := 0; i < concurrency; i++ {
 		go pub(i)
 	}
-}
-
-// 这里是用来设置条件，条件就是消息队列的容量，这样我们就可以控制消息队列的大小了
-func (b *BrokerImpl) setConditions(capacity int) {
-	b.capacity = capacity
 }

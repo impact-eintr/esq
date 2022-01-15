@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"math/rand"
 	"os"
 	"path"
@@ -206,6 +207,7 @@ func (d *diskQueue) exit(deleted bool) error {
 func New(name string, dataPath string, maxBytesPerFile int64,
 	minMsgSize int32, maxMsgSize int32,
 	syncEvery int64, syncTimeout time.Duration, logf LogFunc) Interface {
+
 	d := diskQueue{
 		name:              name,
 		dataPath:          dataPath,
@@ -222,6 +224,11 @@ func New(name string, dataPath string, maxBytesPerFile int64,
 		syncEvery:         syncEvery,
 		syncTimeout:       syncTimeout,
 		logf:              logf,
+	}
+
+	if err := os.MkdirAll(dataPath, 0600); err != nil {
+		d.logf(ERROR, "[DISKQUEUE]@%s failed to ctreate dir - %s", d.name, err)
+		return nil
 	}
 
 	// no need to lock here, nothing else could possibly be touching this instance(单例模式)
@@ -329,8 +336,7 @@ func (d *diskQueue) checkTailCorruption(depth int64) {
 	}
 }
 
-// 放弃之前所有不正常的文件 TODO
-// 设置 readFileNum == writeFileNum && readPos == writePos 等同于清空队列(重开？)
+// 设置 readFileNum == writeFileNum && readPos == writePos 等同于清空队列
 func (d *diskQueue) skipToNextRWFile() error {
 	var err error
 
@@ -572,17 +578,18 @@ func (d *diskQueue) handleReadError() {
 	// 跳到下一个 read file 并重命名手上这个损坏的文件
 	if d.readFileNum == d.writeFileNum {
 		if d.writeFile != nil {
+			log.Println("????")
 			d.writeFile.Close()
 			d.writeFile = nil
 		}
 		d.writeFileNum++
 		d.writePos = 0
 	}
+
 	badFn := d.fileName(d.readFileNum)
 	badRenameFn := badFn + ".bad"
 
-	d.logf(WARN, "[DISKQUEUE]@%s jump to next file and saving bad file as %s",
-		d.name, badRenameFn)
+	d.logf(WARN, "[DISKQUEUE]@%s jump to next file and saving bad file as %s", d.name, badRenameFn)
 
 	err := os.Rename(badFn, badRenameFn)
 	if err != nil {
@@ -611,14 +618,14 @@ func (d *diskQueue) ioLoop() {
 	for {
 		if count == d.syncEvery {
 			d.needSync = true
-			d.logf(DEBUG, "[DISKQUEUE]@s: start to sync", d.name)
+			d.logf(DEBUG, "[DISKQUEUE]@%s: start to sync", d.name)
 		}
 
 		// 操作次数累积到应该同步的时候同步一下
 		if d.needSync {
 			err = d.sync()
 			if err != nil {
-				d.logf(ERROR, "[DISKQUEUE]@s: failed to sync - %s", d.name, err)
+				d.logf(ERROR, "[DISKQUEUE]@%s: failed to sync - %s", d.name, err)
 			}
 			count = 0
 		}
