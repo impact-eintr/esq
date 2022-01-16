@@ -11,8 +11,8 @@ import (
 type Subfunc func(interface{}, chan bool)
 
 // 订阅者一旦订阅就需要一直监听 因此需要提供一个退出的通知 然后使用回调函数消费消息
-func Sub(topic string, mc *mq.Client, cb Subfunc) {
-	ch, err := mc.Subscribe(topic)
+func Sub(topic string, src string, mc *mq.Client, cb Subfunc) {
+	ch, err := mc.Subscribe(topic, src)
 	if err != nil {
 		log.Println("subscribe failed")
 		return

@@ -18,8 +18,8 @@ func (c *Client) Publish(topic string, msg []byte) error {
 	return c.bro.publish(topic, msg)
 }
 
-func (c *Client) Subscribe(topic string) (Interface, error) {
-	return c.bro.subscribe(topic)
+func (c *Client) Subscribe(topic string, src string) (Interface, error) {
+	return c.bro.subscribe(topic, src)
 }
 
 func (c *Client) Unsubscribe(topic string, sub Interface) error {

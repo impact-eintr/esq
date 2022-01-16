@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"math/rand"
+	"os"
 	"sync"
 	"time"
 )
@@ -47,9 +47,20 @@ func NewBroker(dataPath string, maxBytesPerFile int64,
 		syncEvery:       syncEvery,
 		syncTimeout:     syncTimeout,
 		logFunc: func(l LogLevel, f string, args ...interface{}) {
-			// TODO 根据环境变量判断是否开启除ERROR FATAL 以外的消息通知
-			log.SetPrefix(fmt.Sprintf("%s\t", l.String()))
-			log.Printf(f, args...)
+			if _, ok := os.LookupEnv("esq_debug"); ok {
+				log.SetPrefix(fmt.Sprintf("%s\t", l.String()))
+				log.Printf(f, args...)
+				return
+			} else {
+				switch l {
+				case DEBUG:
+				case INFO:
+				case WARN:
+				default:
+					log.SetPrefix(fmt.Sprintf("%s\t", l.String()))
+					log.Printf(f, args...)
+				}
+			}
 		},
 
 		exit:   make(chan bool),
@@ -79,14 +90,14 @@ func (b *BrokerImpl) publish(topic string, pubmsg []byte) error {
 }
 
 // 消息的订阅，传入订阅的主题，即可完成订阅，并返回对应的channel通道用来接收数据
-func (b *BrokerImpl) subscribe(topic string) (Interface, error) {
+func (b *BrokerImpl) subscribe(topic string, src string) (Interface, error) {
 	select {
 	case <-b.exit:
 		return nil, errors.New("broker closed")
 	default:
 	}
 
-	queue := New(fmt.Sprintf("%s_%d", topic, rand.Int()),
+	queue := New(fmt.Sprintf("%s_%s", topic, src),
 		b.dataPath, b.maxBytesPerFile,
 		b.minMsgSize, b.maxMsgSize,
 		b.syncEvery, time.Second,
@@ -136,6 +147,11 @@ func (b *BrokerImpl) close() {
 		close(b.exit)
 		b.Lock()
 		// 这里是否应该调用Interface.Close()
+		for k := range b.topics {
+			for i := range b.topics[k] {
+				b.topics[k][i].Close()
+			}
+		}
 		b.topics = make(map[string][]Interface)
 		b.Unlock()
 	}

@@ -3,9 +3,11 @@ package main
 import (
 	"flag"
 	"fmt"
+	"log"
 	"math"
-	"strings"
 	"time"
+
+	"github.com/judwhite/go-svc"
 
 	"github.com/impact-eintr/enet"
 	"github.com/impact-eintr/enet/iface"
@@ -13,30 +15,52 @@ import (
 	"github.com/impact-eintr/esq/mq"
 )
 
-type PubRouter struct {
+type Router struct {
 	enet.BaseRouter
 }
 
-func (this *PubRouter) Handle(req iface.IRequest) {
-	msgs := strings.Split(string(req.GetData()), "\t") // topic\tmessage
-	esq.Pub(msgs[0], msgs[1], m, nil)
+func (this *Router) Handle(req iface.IRequest) {
+
+	data := req.GetData()
+	switch esq.ParseCommand(data) {
+	case "PUB":
+		esq.Pub(esq.ParseTopic(data), esq.ParseMsg(data), m, nil)
+	case "SUB":
+		go esq.Sub(esq.ParseTopic(data), esq.ParseSrcHost(data), m, func(v interface{}, ch chan bool) {
+			err := req.GetConnection().SendTcpMsg(2020, v.([]byte))
+			if err != nil {
+				ch <- true
+			}
+		})
+	default:
+		log.Println("invalid command type", esq.ParseCommand(data))
+	}
 }
 
-type SubRouter struct {
-	enet.BaseRouter
+var (
+	m     = new(mq.Client)
+	usage = "[NOTICE] If you need to enable debugging,please set the environment variable through `export esq_debug`"
+)
+
+type program struct {
+	svr iface.IServer
 }
 
-func (this *SubRouter) Handle(req iface.IRequest) {
-	msgs := strings.Split(string(req.GetData()), "\t") // topic\tmessage
-	go esq.Sub(msgs[0], m, func(v interface{}, ch chan bool) {
-		err := req.GetConnection().SendTcpMsg(2020, v.([]byte))
-		if err != nil {
-			ch <- true
-		}
-	})
+func (p *program) Init(env svc.Environment) error {
+	p.svr.AddRouter(0, &Router{})
+	return nil
 }
 
-var m = new(mq.Client)
+func (p *program) Start() error {
+	go p.svr.Start()
+	return nil
+}
+
+func (p *program) Stop() error {
+	m.Close()
+	p.svr.Stop()
+	return nil
+}
 
 func init() {
 	path := flag.String("path", "/tmp/esq", "queue path")
@@ -58,11 +82,13 @@ func init() {
 }
 
 func main() {
-	fmt.Println("[NOTICE] If you need to enable debugging,please set the environment variable through `export esq_debug`")
-	s := enet.NewServer("tcp4")
+	fmt.Println(usage)
 
-	s.AddRouter(0, &PubRouter{})  // Publish
-	s.AddRouter(10, &SubRouter{}) // Subscribe
+	prg := program{
+		svr: enet.NewServer("tcp4"),
+	}
 
-	s.Serve()
+	if err := svc.Run(&prg); err != nil {
+		log.Fatal(err)
+	}
 }

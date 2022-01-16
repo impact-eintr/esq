@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"math/rand"
 	"os"
 	"path"
@@ -431,7 +430,7 @@ func (d *diskQueue) readOne() ([]byte, error) {
 
 	// 注意这里的 maxBytesPerFile 不是一个硬性规定(因为写的时候就没有严格限制大小)
 	// 只是提示 reader 下次该去读下一个文件了
-	if d.nextReadPos > d.maxBytesPerFile {
+	if d.nextReadPos >= d.maxBytesPerFile {
 		if d.readFile != nil {
 			d.readFile.Close()
 			d.readFile = nil
@@ -578,7 +577,6 @@ func (d *diskQueue) handleReadError() {
 	// 跳到下一个 read file 并重命名手上这个损坏的文件
 	if d.readFileNum == d.writeFileNum {
 		if d.writeFile != nil {
-			log.Println("????")
 			d.writeFile.Close()
 			d.writeFile = nil
 		}
