@@ -35,7 +35,7 @@ func ParseSrcHost(data []byte) (srchost string) {
 }
 
 func ParseMsg(data []byte) (message string) {
-	message = strings.Split(string(data), "\n")[1]
+	message = strings.TrimPrefix(string(data), strings.Split(string(data), "\n")[0]+"\n")
 	return
 }
 
