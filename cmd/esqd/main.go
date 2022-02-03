@@ -19,19 +19,29 @@ type Router struct {
 	enet.BaseRouter
 }
 
+// TODO 无法在 Suber 退出的时候正常停止 亟待解决
 func (this *Router) Handle(req iface.IRequest) {
-
 	data := req.GetData()
 	switch esq.ParseCommand(data) {
 	case "PUB":
 		esq.Pub(esq.ParseTopic(data), esq.ParseMsg(data), m, nil)
+
 	case "SUB":
-		go esq.Sub(esq.ParseTopic(data), esq.ParseSrcHost(data), m, func(v interface{}, ch chan bool) {
-			err := req.GetConnection().SendTcpMsg(2020, v.([]byte))
+		topic, src := esq.ParseTopic(data), esq.ParseSrcHost(data)
+
+		s := esq.NewSubscriber()
+		s.Sub(topic, src, m, func(msg []byte) {
+			// 将收到的订阅消息发送给 消费者
+			err := req.GetConnection().SendTcpMsg(2020, msg)
+			// 如果发送出现问题就结束订阅
 			if err != nil {
-				ch <- true
+				s.Exit()
 			}
 		})
+
+	case "UNSUB":
+		esq.Unsub(esq.ParseTopic(data), esq.ParseSrcHost(data), m, nil)
+
 	default:
 		log.Println("invalid command type", esq.ParseCommand(data))
 	}
@@ -39,7 +49,8 @@ func (this *Router) Handle(req iface.IRequest) {
 
 var (
 	m     = new(mq.Client)
-	usage = "[NOTICE] If you need to enable debugging,please set the environment variable through `export esq_debug`"
+	usage = `[NOTICE] If you need to enable debugging,
+           please set the environment variable through "export esq_debug=true"`
 )
 
 type program struct {

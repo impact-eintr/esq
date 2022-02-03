@@ -4,7 +4,7 @@ import (
 	"github.com/impact-eintr/esq/mq"
 )
 
-type Pubfunc func(interface{})
+type Pubfunc func()
 
 func Pub(topic string, pubmsg string, mc *mq.Client, cb Pubfunc) {
 	// 发布消息
@@ -15,6 +15,6 @@ func Pub(topic string, pubmsg string, mc *mq.Client, cb Pubfunc) {
 	}
 	// 调用回调函数
 	if cb != nil {
-		cb(nil)
+		cb()
 	}
 }

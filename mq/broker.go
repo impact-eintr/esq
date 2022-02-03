@@ -22,7 +22,6 @@ type BrokerImpl struct {
 	exit     chan bool
 	capacity int
 	topics   map[string][]Interface
-	ioChan   chan []byte
 	sync.RWMutex
 
 	// diskQueue config
@@ -65,7 +64,6 @@ func NewBroker(dataPath string, maxBytesPerFile int64,
 
 		exit:   make(chan bool),
 		topics: make(map[string][]Interface),
-		ioChan: make(chan []byte, 1),
 	}
 }
 
@@ -110,7 +108,7 @@ func (b *BrokerImpl) subscribe(topic string, src string) (Interface, error) {
 }
 
 // 取消订阅，传入订阅的主题和对应的通道
-func (b *BrokerImpl) unsubscribe(topic string, sub Interface) error {
+func (b *BrokerImpl) unsubscribe(topic string, cancel Interface, remove bool) error {
 	select {
 	case <-b.exit:
 		return errors.New("broker closed")
@@ -126,12 +124,20 @@ func (b *BrokerImpl) unsubscribe(topic string, sub Interface) error {
 
 	b.Lock()
 	var newSubs []Interface
-	for _, subscriber := range subscribers {
-		if subscriber == sub {
+	for _, sub := range subscribers {
+		if sub == cancel {
+			if remove {
+				sub.Remove() // 直接删除？ TODO
+			} else {
+				sub.Close()
+			}
 			continue
 		}
-		newSubs = append(newSubs, subscriber)
+		newSubs = append(newSubs, sub)
 	}
+	// 取消订阅者
+	b.topics[topic] = newSubs
+
 	b.Unlock()
 
 	return nil
@@ -146,7 +152,7 @@ func (b *BrokerImpl) close() {
 	default:
 		close(b.exit)
 		b.Lock()
-		// 这里是否应该调用Interface.Close()
+		// TODO 这里是否应该调用Interface.Close()
 		for k := range b.topics {
 			for i := range b.topics[k] {
 				b.topics[k][i].Close()
@@ -185,11 +191,11 @@ func (b *BrokerImpl) broadcast(msg []byte, subscribers []Interface) {
 			}
 			idleTimeout.Reset(idleDuration)
 			select {
-			case b.ioChan <- msg:
-				subscribers[j].Put(<-b.ioChan)
 			case <-idleTimeout.C:
 			case <-b.exit:
 				return
+			default:
+				subscribers[j].Put(msg)
 			}
 		}
 	}

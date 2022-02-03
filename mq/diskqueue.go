@@ -7,9 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"math/rand"
 	"os"
 	"path"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -44,10 +46,12 @@ func (l LogLevel) String() string {
 }
 
 type Interface interface {
+	Name() string
 	Put([]byte) error
 	ReadChan() <-chan []byte
 	Close() error
 	Delete() error
+	Remove() error
 	Depth() int64
 	Empty() error
 }
@@ -75,6 +79,9 @@ type diskQueue struct {
 	depth        int64 // 队列的长度
 
 	sync.RWMutex
+
+	// 内存缓存队列 TODO 用于 集群传递消息
+	data []byte
 
 	// instantiation(实例化) time metadata
 	name            string
@@ -112,9 +119,67 @@ type diskQueue struct {
 	logf LogFunc
 }
 
+// 新的磁盘队列实例 New(...)
+// Input:
+// name             名字
+// dataPath         文件保存目录
+// maxBytesPerFile  每个文件最大尺寸
+// minMsgSize       消息最小长度
+// maxMsgSize       消息最大长度
+// syncEvery        同步数
+// syncTimeout      同步间隔
+// logf             日志函数
+func New(name string, dataPath string, maxBytesPerFile int64,
+	minMsgSize int32, maxMsgSize int32,
+	syncEvery int64, syncTimeout time.Duration, logf LogFunc) Interface {
+
+	d := diskQueue{
+		name:              name,
+		data:              make([]byte, 0),
+		dataPath:          dataPath,
+		maxBytesPerFile:   maxBytesPerFile,
+		minMsgSize:        minMsgSize,
+		maxMsgSize:        maxMsgSize,
+		readChan:          make(chan []byte),
+		writeChan:         make(chan []byte),
+		writeResponseChan: make(chan error),
+		emptyChan:         make(chan int),
+		emptyResponseChan: make(chan error),
+		exitChan:          make(chan int),
+		exitSyncChan:      make(chan int),
+		syncEvery:         syncEvery,
+		syncTimeout:       syncTimeout,
+		logf:              logf,
+	}
+
+	if err := os.MkdirAll(dataPath, 0755); err != nil {
+		d.logf(ERROR, "[DISKQUEUE]@%s failed to ctreate dir - %s", d.name, err)
+		return nil
+	}
+
+	// no need to lock here, nothing else could possibly be touching this instance(单例模式)
+	err := d.retrieveMetaData() // 从元数据中恢复出一条可用的diskqueue
+	if err != nil && !os.IsNotExist(err) {
+		d.logf(ERROR, "[DISKQUEUE]@%s failed to retrieveMetaData - %s", d.name, err)
+	}
+
+	err = d.retrieveMemeQ() // 恢复缓存队列
+	if err != nil && !errors.Is(err, io.EOF) {
+		d.logf(ERROR, "[MEMQUEUE]@%s failed to retrieveMemQueue - %s", d.name, err)
+	}
+
+	go d.ioLoop()
+	// 返回一个已经启动了相关机制的实例
+	return &d
+}
+
+// 返回diskqueue的名称
+func (d *diskQueue) Name() string {
+	return d.name
+}
+
 // 将 []byte 写入队列
 func (d *diskQueue) Put(data []byte) error {
-	// TODO 为什么是只读保护
 	d.RLock()
 	defer d.RUnlock()
 
@@ -141,6 +206,20 @@ func (d *diskQueue) Close() error {
 // Delete 只会清除队列
 func (d *diskQueue) Delete() error {
 	return d.exit(true)
+}
+
+// Remove 删除这个队列
+func (d *diskQueue) Remove() error {
+	if err := d.exit(true); err != nil {
+		return err
+	}
+	log.Println(d.fileNames())
+	for _, f := range d.fileNames() {
+		if err := os.Remove(f); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (d *diskQueue) Depth() int64 {
@@ -193,54 +272,6 @@ func (d *diskQueue) exit(deleted bool) error {
 
 }
 
-// 新的磁盘队列实例 New(...)
-// Input:
-// name             名字
-// dataPath         文件保存目录
-// maxBytesPerFile  每个文件最大尺寸
-// minMsgSize       消息最小长度
-// maxMsgSize       消息最大长度
-// syncEvery        同步数
-// syncTimeout      同步间隔
-// logf             日志函数
-func New(name string, dataPath string, maxBytesPerFile int64,
-	minMsgSize int32, maxMsgSize int32,
-	syncEvery int64, syncTimeout time.Duration, logf LogFunc) Interface {
-
-	d := diskQueue{
-		name:              name,
-		dataPath:          dataPath,
-		maxBytesPerFile:   maxBytesPerFile,
-		minMsgSize:        minMsgSize,
-		maxMsgSize:        maxMsgSize,
-		readChan:          make(chan []byte),
-		writeChan:         make(chan []byte),
-		writeResponseChan: make(chan error),
-		emptyChan:         make(chan int),
-		emptyResponseChan: make(chan error),
-		exitChan:          make(chan int),
-		exitSyncChan:      make(chan int),
-		syncEvery:         syncEvery,
-		syncTimeout:       syncTimeout,
-		logf:              logf,
-	}
-
-	if err := os.MkdirAll(dataPath, 0600); err != nil {
-		d.logf(ERROR, "[DISKQUEUE]@%s failed to ctreate dir - %s", d.name, err)
-		return nil
-	}
-
-	// no need to lock here, nothing else could possibly be touching this instance(单例模式)
-	err := d.retrieveMetaData() // 从元数据中恢复出一条可用的diskqueue
-	if err != nil && !os.IsNotExist(err) {
-		d.logf(ERROR, "[DISKQUEUE]@%s failed to retrieveMetaData - %s", d.name, err)
-	}
-
-	go d.ioLoop()
-	// 返回一个已经启动了相关机制的实例
-	return &d
-}
-
 // 从元数据中恢复出一条可用的diskqueue
 func (d *diskQueue) retrieveMetaData() error {
 	var f *os.File
@@ -267,9 +298,108 @@ func (d *diskQueue) retrieveMetaData() error {
 	return nil
 }
 
-// 格式：// (d.dataPath)/(d.name).diskqueue.meta.data
+// 恢复 diskQueue 的 内存缓存队列
+func (d *diskQueue) retrieveMemeQ() error {
+	var readFile *os.File
+	var reader *bufio.Reader
+	var err error
+
+	readPos := d.readPos
+	readFileNum := d.readFileNum
+	nextReadPos := d.nextReadPos
+	nextReadFileNum := d.nextReadFileNum
+	writePos := d.writePos
+	writeFileNum := d.writeFileNum
+
+	for readFileNum < writeFileNum || readPos < writePos {
+		var msgSize int32
+
+		if readFile == nil {
+			curFileName := d.fileName(readFileNum)
+			readFile, err = os.OpenFile(curFileName, os.O_RDWR, 0600)
+			if err != nil {
+				return err
+			}
+
+			d.logf(INFO, "[DISKQUEUE]@%s: readOne() opened %s", d.name, curFileName)
+
+			if readPos > 0 {
+				_, err = readFile.Seek(readPos, 0)
+				if err != nil {
+					readFile.Close()
+					readFile = nil
+					return err
+				}
+			}
+			reader = bufio.NewReader(readFile)
+		}
+
+		// 先读出来消息大小
+		err = binary.Read(reader, binary.BigEndian, &msgSize)
+		if err != nil {
+			readFile.Close()
+			readFile = nil
+			return err
+		}
+		if msgSize < d.minMsgSize || msgSize > d.maxMsgSize {
+			// this file is corrupt and we have no reasonable guarantee on
+			// where a new message should begin
+			readFile.Close()
+			readFile = nil
+			return fmt.Errorf("invalid message read size (%d)", msgSize)
+		}
+
+		readBuf := make([]byte, msgSize)
+		_, err = io.ReadFull(reader, readBuf)
+		if err != nil {
+			readFile.Close()
+			readFile = nil
+			return err
+		}
+		// 更新缓存
+		buf := make([]byte, 4)
+		binary.BigEndian.PutUint32(buf, uint32(msgSize))
+		d.data = append(d.data, buf...)
+		d.data = append(d.data, readBuf...)
+
+		totalBytes := int64(4 + msgSize)
+
+		nextReadPos = readPos + totalBytes
+		nextReadFileNum = readFileNum
+
+		// 注意这里的 maxBytesPerFile 不是一个硬性规定(因为写的时候就没有严格限制大小)
+		// 只是提示 reader 下次该去读下一个文件了
+		if nextReadPos >= d.maxBytesPerFile {
+			if readFile != nil {
+				readFile.Close()
+				readFile = nil
+			}
+			// 下次读下一个文件
+			nextReadFileNum++
+			nextReadPos = 0
+		}
+	}
+	fmt.Println(string(d.data))
+
+	return nil
+}
+
+// 格式：(d.dataPath)/(d.name).diskqueue.meta.data
 func (d *diskQueue) metaDataFileName() string {
 	return fmt.Sprintf(path.Join(d.dataPath, "%s.diskqueue.meta.data"), d.name)
+}
+
+// 格式：(d.dataPath)/(d.name).diskqueue.(fileNum).data
+func (d *diskQueue) fileName(fileNum int64) string {
+	return fmt.Sprintf(path.Join(d.dataPath, "%s.diskqueue.%06d.data"), d.name, fileNum)
+}
+
+func (d *diskQueue) fileNames() []string {
+	files, err := filepath.Glob(fmt.Sprintf(path.Join(d.dataPath, "%s.diskqueue.*.data"), d.name))
+	if err != nil {
+		panic(err)
+	}
+	return files
 }
 
 // 移除之前读过的文件
@@ -370,11 +500,6 @@ func (d *diskQueue) skipToNextRWFile() error {
 	return err
 }
 
-// 格式：(d.dataPath)/(d.name).diskqueue.(fileNum).data
-func (d *diskQueue) fileName(fileNum int64) string {
-	return fmt.Sprintf(path.Join(d.dataPath, "%s.diskqueue.%06d.data"), d.name, fileNum)
-}
-
 // readOne 为单个 []byte 执行低级文件系统读取，同时推进读取位置和滚动文件（如有必要）
 func (d *diskQueue) readOne() ([]byte, error) {
 	var err error
@@ -427,6 +552,9 @@ func (d *diskQueue) readOne() ([]byte, error) {
 
 	d.nextReadPos = d.readPos + totalBytes
 	d.nextReadFileNum = d.readFileNum
+
+	// 更新缓存
+	d.data = d.data[totalBytes:]
 
 	// 注意这里的 maxBytesPerFile 不是一个硬性规定(因为写的时候就没有严格限制大小)
 	// 只是提示 reader 下次该去读下一个文件了
@@ -491,6 +619,14 @@ func (d *diskQueue) writeOne(data []byte) error {
 
 	totalBytes := int64(4 + dataLen)
 	d.writePos += totalBytes
+
+	// 更新缓存
+	buf := make([]byte, 4)
+	binary.BigEndian.PutUint32(buf, uint32(dataLen))
+	d.data = append(d.data, buf...)
+	d.data = append(d.data, data...)
+
+	// 更新队列长度(以元素消息计)
 	atomic.AddInt64((&d.depth), 1)
 
 	// 如果当前要写入的内容长度超过文件限制(非硬性要求 只是要求超过这个值后 下一条消息应该写在下一个文件)

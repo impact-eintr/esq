@@ -16,44 +16,48 @@ var (
 func main() {
 
 	go func() {
-		time.Sleep(time.Second)
-		conn, err := net.Dial("tcp4", "127.0.0.1:6430")
-		if err != nil {
-			fmt.Println("client start err ", err)
-			return
-		}
-		defer conn.Close()
-
 		for {
-			msg := esq.PackageProtocol(0, "PUB", topic_heartbeat, "1.1.1.1", "1.1.1.1:8080")
-			//发封包message消息
-			_, err = conn.Write(msg)
+			time.Sleep(time.Second)
+			conn, err := net.Dial("tcp4", "127.0.0.1:6430")
 			if err != nil {
-				fmt.Println("write error err ", err)
-				return
+				fmt.Println("client start err ", err)
+				continue
 			}
-			time.Sleep(10 * time.Millisecond)
+			defer conn.Close()
+
+			for {
+				msg := esq.PackageProtocol(0, "PUB", topic_heartbeat, "1.1.1.1", "1.1.1.1:8080")
+				//发封包message消息
+				_, err = conn.Write(msg)
+				if err != nil {
+					fmt.Println("write error err ", err)
+					break
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
 		}
 	}()
 
 	go func() {
-		time.Sleep(time.Second)
-		conn, err := net.Dial("tcp4", "127.0.0.1:6430")
-		if err != nil {
-			fmt.Println("client start err ", err)
-			return
-		}
-		defer conn.Close()
-
 		for {
-			msg := esq.PackageProtocol(0, "PUB", topic_heartbeat, "2.2.2.2", "2.2.2.2:8080")
-			//发封包message消息
-			_, err = conn.Write(msg)
+			time.Sleep(time.Second)
+			conn, err := net.Dial("tcp4", "127.0.0.1:6430")
 			if err != nil {
-				fmt.Println("write error err ", err)
-				return
+				fmt.Println("client start err ", err)
+				continue
 			}
-			time.Sleep(10 * time.Millisecond)
+			defer conn.Close()
+
+			for {
+				msg := esq.PackageProtocol(0, "PUB", topic_heartbeat, "2.2.2.2", "2.2.2.2:8080")
+				//发封包message消息
+				_, err = conn.Write(msg)
+				if err != nil {
+					fmt.Println("write error err ", err)
+					break
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
 		}
 	}()
 
