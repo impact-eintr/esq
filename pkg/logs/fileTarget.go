@@ -3,6 +3,7 @@ package logs
 import (
 	"encoding/json"
 	"fmt"
+	"impact-eintr/esq/pkg/utils"
 	"os"
 	"strconv"
 	"sync"
