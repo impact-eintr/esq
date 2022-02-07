@@ -9,18 +9,17 @@ import (
 
 	"github.com/judwhite/go-svc"
 
-	"github.com/impact-eintr/enet"
-	"github.com/impact-eintr/enet/iface"
+	"github.com/impact-eintr/enet/v2"
 	"github.com/impact-eintr/esq"
 	"github.com/impact-eintr/esq/mq"
 )
 
 type Router struct {
-	enet.BaseRouter
+	*enet.BaseRouter
 }
 
 // TODO 无法在 Suber 退出的时候正常停止 亟待解决
-func (this *Router) Handle(req iface.IRequest) {
+func (this *Router) Handle(req enet.IRequest) {
 	data := req.GetData()
 	switch esq.ParseCommand(data) {
 	case "PUB":
@@ -29,15 +28,15 @@ func (this *Router) Handle(req iface.IRequest) {
 	case "SUB":
 		topic, src := esq.ParseTopic(data), esq.ParseSrcHost(data)
 
-		s := esq.NewSubscriber()
-		s.Sub(topic, src, m, func(msg []byte) {
+		exitCh := this.Exit(req.GetConnection().GetConnID())
+		esq.Sub(topic, src, m, func(msg []byte) {
 			// 将收到的订阅消息发送给 消费者
-			err := req.GetConnection().SendTcpMsg(2020, msg)
+			err := req.GetConnection().SendMsg(2020, msg)
 			// 如果发送出现问题就结束订阅
 			if err != nil {
-				s.Exit()
+				log.Println(err)
 			}
-		})
+		}, exitCh)
 
 	case "UNSUB":
 		esq.Unsub(esq.ParseTopic(data), esq.ParseSrcHost(data), m, nil)
@@ -54,11 +53,11 @@ var (
 )
 
 type program struct {
-	svr iface.IServer
+	svr enet.IServer
 }
 
 func (p *program) Init(env svc.Environment) error {
-	p.svr.AddRouter(0, &Router{})
+	p.svr.AddRouter(0, &Router{enet.NewBaseRouter()})
 	return nil
 }
 
