@@ -87,7 +87,6 @@ func (s *HttpServ) Run() {
 		s.LogDebug(err)
 		return
 	}
-
 }
 
 func (s *HttpServ) LogError(msg interface{}) {
@@ -110,15 +109,14 @@ func (s *HttpServ) LogDebug(msg interface{}) {
 func GinLogger(s *HttpServ) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
-		path := c.Requestequest.URL.Path
-		query := c.Requestequest.URL.RawQuery
+		path := c.Request.URL.Path
+		query := c.Request.URL.RawQuery
 		c.Next()
 
-		cost := time.Since(start)
 		infomsg := fmt.Sprintf("status: %d, method: %s, path: %s, query: %s, ip: %s, user-agent: %s, errors: %s, cost: %d",
-			c.Writer.Status(), c.Requestequest.Method,
-			path, query, c.ClientIP(), c.Requestequest.UserAgent(),
-			c.Errors.ByType(gin.ErrorTypePrivate).String(), cost)
+			c.Writer.Status(), c.Request.Method,
+			path, query, c.ClientIP(), c.Request.UserAgent(),
+			c.Errors.ByType(gin.ErrorTypePrivate).String(), time.Since(start))
 		s.LogInfo(infomsg)
 	}
 }
@@ -140,9 +138,9 @@ func GinRecovery(s *HttpServ, stack bool) gin.HandlerFunc {
 					}
 				}
 
-				httpRequest, _ := httputil.DumpRequest(c.Requestequest, false)
+				httpRequest, _ := httputil.DumpRequest(c.Request, false)
 				if brokenPipe {
-					errmsg := fmt.Sprintf("%s %v %s", c.Requestequest.URL.Path, err, string(httpRequest))
+					errmsg := fmt.Sprintf("%s %v %s", c.Request.URL.Path, err, string(httpRequest))
 					s.LogError(errmsg)
 					// If the connection is dead, we can't write a status to it.
 					c.Error(err.(error)) // nolint: errcheck

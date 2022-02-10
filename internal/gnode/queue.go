@@ -156,7 +156,7 @@ func (q *queue) exit() {
 	q.wg.Wait() // 上面的操作是通知 goroutine 需要退出 等所有goroutine都退出后 再exit
 }
 
-// scan 里面有递归遍历队列 值得借鉴
+// scan 里面有递归遍历队列 删除已经过确认的消息 处理过期消息 以及调整相应的状态 在正在读取的位置停下来
 func (q *queue) scan() ([]byte, error) {
 	if q.closed {
 		return nil, ErrQueueClosed
@@ -316,6 +316,7 @@ func (q *queue) ack(msgId uint64) error {
 		return fmt.Errorf("ack.offset error.")
 	}
 
+	// 改变状态 之后queue.scan 会将这种已经确认回复的消息删除掉
 	binary.BigEndian.PutUint16(q.data[offset+1:offset+3], MSG_STATUS_FIN)
 	delete(q.waitAck, msgId)
 	return nil
@@ -365,7 +366,9 @@ func (q *queue) unmap() error {
 	return unmap(q)
 }
 
-// 队列读取消息 调用一次 读取一条 如果队列中没有数据 会阻塞
+// 队列读取消息
+// 调用一次 读取一条 如果队列中没有数据 会阻塞
+// 如果配置成自动回复 表示默认这条消息不需要等待回复 状态设置成已经完成
 func (q *queue) read(isAutoAck bool) (*readQueueData, error) {
 	if q.closed {
 		return nil, ErrQueueClosed

@@ -48,8 +48,8 @@ type Msg struct {
 
 // 延迟消息结构
 type DelayMsg struct {
-	Msg      *Msg   `json:"msg"`
-	BindKeys []byte `json:"bind_key"`
+	Msg      *Msg     `json:"msg"`
+	BindKeys []string `json:"bind_key"`
 }
 
 type MsgIndex struct {

@@ -203,7 +203,6 @@ func (d *Dispatcher) resizePool(topicNum int, workCh chan *Topic, closeCh chan i
 			closeCh <- 1
 		}
 	}
-
 }
 
 // get topic by name
