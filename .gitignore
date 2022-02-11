@@ -17,3 +17,5 @@
 .idea
 
 *data*
+cmd/gnode/gnode
+cmd/gcli/gcli

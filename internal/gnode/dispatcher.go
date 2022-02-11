@@ -304,15 +304,15 @@ func (d *Dispatcher) push(name string, routeKey string, data []byte, delay int) 
 }
 
 // register multiple client
-func (d *Dispatcher) multiple(client, name, bindKey string) error {
-	topic := d.GetTopic(name)
-	return topic.multiple(client, bindKey)
-}
+//func (d *Dispatcher) multiple(client, name, bindKey string) error {
+//	topic := d.GetTopic(name)
+//	return topic.multiple(client, bindKey)
+//}
 
 // consume message
-func (d *Dispatcher) pop(clientID, name, bindKey string) (*Msg, error) {
+func (d *Dispatcher) pop(name, bindKey string) (*Msg, error) {
 	topic := d.GetTopic(name)
-	return topic.pop(clientID, bindKey)
+	return topic.pop(bindKey)
 }
 
 // consume dead message

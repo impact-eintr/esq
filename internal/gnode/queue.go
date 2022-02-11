@@ -154,23 +154,23 @@ func (q *queue) loopRead() {
 	}
 }
 
-func (q *queue) loopMultiple() {
-	q.Do(func() {
-		for {
-			select {
-			case data := <-q.readChan:
-				q.topic.multipleMux.RLock()
-				for _, ch := range q.topic.multipleQueues {
-					ch <- data.data
-				}
-				q.topic.multipleMux.RUnlock()
-			case <-q.exitChan:
-				log.Println("multiple exit!!!")
-				return
-			}
-		}
-	})
-}
+//func (q *queue) loopMultiple() {
+//	q.Do(func() {
+//		for {
+//			select {
+//			case data := <-q.readChan:
+//				q.topic.multipleMux.RLock()
+//				for _, ch := range q.topic.multipleQueues {
+//					ch <- data.data
+//				}
+//				q.topic.multipleMux.RUnlock()
+//			case <-q.exitChan:
+//				log.Println("multiple exit!!!")
+//				return
+//			}
+//		}
+//	})
+//}
 
 // 通知 queue 中运行的goroutine 们退出 已收录到 破大防 中
 func (q *queue) exit() {
