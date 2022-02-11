@@ -25,6 +25,10 @@ go build
 ``` sh
 cd cmd/gcli
 
+curl -s "http://127.0.0.1:9504/declareQueue?topic=heartbeat&bindKey=test"
+
+curl -s "http://127.0.0.1:9504/config?topic=heartbeat&isAutoAck=1&isMultiple=1&mode=1&msgTTR=5&msgRetry=5
+
 go run ./main.go
 ```
 
