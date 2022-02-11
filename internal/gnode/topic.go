@@ -60,7 +60,7 @@ type Topic struct {
 
 	// TODO 相关元数据
 	multipleQueues map[string]chan []byte
-	multipleMux    sync.Mutex
+	multipleMux    sync.RWMutex
 }
 
 type topicConfigure struct {
@@ -458,18 +458,18 @@ func (t *Topic) pop(clientID, bindKey string) (*Msg, error) {
 		}
 
 		// 广播消息
-		t.multipleMux.Lock()
+		t.multipleMux.RLock()
 
 		// 检测是否注册
 		if _, ok := t.multipleQueues[clientID]; !ok {
-			t.multipleMux.Unlock()
+			t.multipleMux.RUnlock()
 			return nil, fmt.Errorf("%s never registered", clientID)
 		}
 
 		// 如果阻塞了 怎么处理？
 		for {
-			t.multipleMux.Unlock()
-			t.multipleMux.Lock()
+			t.multipleMux.RUnlock()
+			t.multipleMux.RLock()
 			if len(t.multipleQueues[clientID]) != 0 {
 				break
 			}
@@ -477,7 +477,7 @@ func (t *Topic) pop(clientID, bindKey string) (*Msg, error) {
 
 		data.data = <-t.multipleQueues[clientID]
 
-		t.multipleMux.Unlock()
+		t.multipleMux.RUnlock()
 	} else {
 		data = <-queue.readChan
 		if data == nil {

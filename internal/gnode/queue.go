@@ -159,11 +159,11 @@ func (q *queue) loopMultiple() {
 		for {
 			select {
 			case data := <-q.readChan:
-				q.topic.multipleMux.Lock()
+				q.topic.multipleMux.RLock()
 				for _, ch := range q.topic.multipleQueues {
 					ch <- data.data
 				}
-				q.topic.multipleMux.Unlock()
+				q.topic.multipleMux.RUnlock()
 			case <-q.exitChan:
 				log.Println("multiple exit!!!")
 				return
