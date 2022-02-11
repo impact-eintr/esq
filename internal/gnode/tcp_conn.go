@@ -340,13 +340,6 @@ func (c *TcpConn) DEAD(params [][]byte) error {
 	return nil
 }
 
-type topicConfigure struct {
-	isAutoAck int // 是否自动确认消息，1是，0否，默认为0
-	msgTTR    int // 消息执行超时时间，在msgTTR内没有确认消息，则消息重新入队，再次被消费,默认为30
-	msgRetry  int // 消息重试次数，超过msgRetry次数后，消息会被写入到死信队列，默认为5
-	mode      int // 路由key匹配模式，1全匹配，2模糊匹配，默认为1
-}
-
 // 设置topic信息,目前只有isAutoAck选项
 // set <topic_name> <isAutoAck> <mode> <msg_ttr> <msg_retry>\n
 func (c *TcpConn) SET(params [][]byte) error {

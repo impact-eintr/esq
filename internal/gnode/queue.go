@@ -44,6 +44,7 @@ const REWRITE_SIZE = 100 * 1024 * 1024
 // 局部错误变量
 var (
 	ErrQueueClosed = errors.New("queue has been cloesd")
+	ErrQueueEmpty  = errors.New("queue was empty")
 )
 
 // queue 队列,消息存储地方
@@ -72,6 +73,7 @@ type queue struct {
 	exitChan          chan struct{}
 	notifyReadMsgChan chan bool
 	sync.RWMutex
+	sync.Once
 }
 
 type readQueueData struct {
@@ -136,7 +138,11 @@ func NewQueue(name, bindKey string, ctx *Context, topic *Topic) *queue {
 func (q *queue) loopRead() {
 	for {
 		queueData, err := q.read(q.topic.isAutoAck)
-		if err != nil {
+		switch err {
+		case nil:
+		case ErrQueueEmpty:
+			continue
+		default:
 			q.LogError(err)
 		}
 
@@ -146,6 +152,24 @@ func (q *queue) loopRead() {
 		case q.readChan <- queueData:
 		}
 	}
+}
+
+func (q *queue) loopMultiple() {
+	q.Do(func() {
+		for {
+			select {
+			case data := <-q.readChan:
+				q.topic.multipleMux.Lock()
+				for _, ch := range q.topic.multipleQueues {
+					ch <- data.data
+				}
+				q.topic.multipleMux.Unlock()
+			case <-q.exitChan:
+				log.Println("multiple exit!!!")
+				return
+			}
+		}
+	})
 }
 
 // 通知 queue 中运行的goroutine 们退出 已收录到 破大防 中
@@ -195,7 +219,7 @@ func (q *queue) scan() ([]byte, error) {
 		q.Unlock()
 		return q.scan()
 	}
-	// TODO 消息过期机制
+	// 消息过期机制
 	expireTime := binary.BigEndian.Uint64(q.data[q.soffset+7 : q.soffset+15])
 	q.LogDebug(fmt.Sprintf("msg.expire:%v now:%v", expireTime, time.Now().Unix()))
 
@@ -377,6 +401,11 @@ func (q *queue) read(isAutoAck bool) (*readQueueData, error) {
 	q.Lock()
 	defer q.Unlock()
 
+	// 空队列就不读了
+	if atomic.LoadInt64(&q.num) == 0 {
+		return nil, ErrQueueEmpty
+	}
+
 	msgOffset := q.roffset
 	if q.roffset == q.woffset {
 		q.Unlock()
@@ -424,7 +453,7 @@ func (q *queue) updateMsgStatus(msgId uint64, offset int64, status int) {
 	}
 
 	if flag := q.data[offset]; flag != 'v' {
-		q.LogError(fmt.Sprintf("invaild offset, offset : %s", offset))
+		q.LogError(fmt.Sprintf("invaild offset, offset : %d", offset))
 		return
 	}
 
@@ -482,6 +511,10 @@ func (q *queue) grow() error {
 	fz := q.filesize + GROW_SIZE
 	if err := q.mmap(int(fz)); err != nil {
 		return err
+	}
+
+	if err := q.file.Truncate(fz); err != nil {
+		return errors.New(fmt.Sprintf("file resize error: %s\n", err))
 	}
 
 	if err := q.file.Sync(); err != nil {

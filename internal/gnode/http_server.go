@@ -48,6 +48,7 @@ func (s *HttpServ) Run() {
 	r.GET("/ack", api.Ack)
 	r.GET("/ping", api.Ping)
 	r.GET("/config", api.Config)
+	r.GET("/multiple", api.Multiple)
 	r.GET("/declareQueue", api.DeclareQueue)
 	r.GET("/exitTopic", api.ExitTopic)
 	r.GET("/setIsAutoAck", api.SetIsAutoAck)

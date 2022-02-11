@@ -8,7 +8,6 @@ import (
 	"impact-eintr/esq/pkg/logs"
 	"impact-eintr/esq/pkg/utils"
 	"io/ioutil"
-	"log"
 	"os"
 	"regexp"
 	"sync"
@@ -25,14 +24,20 @@ const (
 	ROUTE_KEY_MATCH_FUZZY = 2
 )
 
+var (
+	ErrNotMultiple    = errors.New("this topic is not a multiple topic")
+	ErrHaveRegistered = errors.New("this client have registered")
+)
+
 // topic 消息主题,即消息类型,每一条消息都有所属topic,topic会维护多个queue
 // topic 的所有数据会存放在 他自身拥有的 Dispatcher 的DB对象的一个桶中(topic.name 为该桶的 key)
 type Topic struct {
-	name      string
-	mode      int
-	msgTTR    int // TODO TTR
-	msgRetry  int
-	isAutoAck bool // 自动回复表示每条消息不会等待回复
+	name       string
+	mode       int
+	msgTTR     int // 消息有效时间
+	msgRetry   int
+	isAutoAck  bool // 自动回复表示每条消息不会等待回复
+	isMultiple bool // 是否是多播频道
 
 	pushNum int64
 	popNum  int64
@@ -52,6 +57,18 @@ type Topic struct {
 	waitAckMux sync.Mutex
 	queueMux   sync.Mutex
 	sync.Mutex
+
+	// TODO 相关元数据
+	multipleQueues map[string]chan []byte
+	multipleMux    sync.Mutex
+}
+
+type topicConfigure struct {
+	isAutoAck  int // 是否自动确认消息，1是，0否，默认为0
+	isMultiple int // 是否是多播频道，1是，0否，默认为0
+	msgTTR     int // 消息执行超时时间，在msgTTR内没有确认消息，则消息重新入队，再次被消费,默认为30
+	msgRetry   int // 消息重试次数，超过msgRetry次数后，消息会被写入到死信队列，默认为5
+	mode       int // 路由key匹配模式，1全匹配，2模糊匹配，默认为1
 }
 
 type TopicMeta struct {
@@ -60,6 +77,7 @@ type TopicMeta struct {
 	PushNum     int64       `json:"push_num"`
 	DeadNum     int64       `json:"dead_num"`
 	IsAutoAck   bool        `json:"is_auto_ack"`
+	IsMultiple  bool        `json:"is_multiple"`
 	Queues      []QueueMeta `json:"queues"`
 	DeataQueues []QueueMeta `json:"dead_queues"`
 }
@@ -75,17 +93,19 @@ type QueueMeta struct {
 
 func NewTopic(name string, ctx *Context) *Topic {
 	t := &Topic{
-		ctx:        ctx,
-		name:       name,
-		msgTTR:     ctx.Conf.MsgTTR,
-		msgRetry:   ctx.Conf.MsgMaxRetry,
-		mode:       ROUTE_KEY_MATCH_FUZZY,
-		isAutoAck:  true,
-		exitChan:   make(chan struct{}),
-		dispatcher: ctx.Dispatcher,
-		startTime:  time.Now(),
-		queues:     make(map[string]*queue),
-		deadQueues: make(map[string]*queue),
+		ctx:            ctx,
+		name:           name,
+		msgTTR:         ctx.Conf.MsgTTR,
+		msgRetry:       ctx.Conf.MsgMaxRetry,
+		mode:           ROUTE_KEY_MATCH_FUZZY,
+		isAutoAck:      true,
+		isMultiple:     false,
+		exitChan:       make(chan struct{}),
+		dispatcher:     ctx.Dispatcher,
+		startTime:      time.Now(),
+		queues:         make(map[string]*queue),
+		deadQueues:     make(map[string]*queue),
+		multipleQueues: make(map[string]chan []byte),
 	}
 
 	t.init()
@@ -132,6 +152,7 @@ func (t *Topic) init() {
 	t.pushNum = meta.PushNum
 	t.deadNum = meta.DeadNum
 	t.isAutoAck = meta.IsAutoAck
+	t.isMultiple = meta.IsMultiple
 
 	t.queueMux.Lock()
 	defer t.queueMux.Unlock()
@@ -345,11 +366,15 @@ func (t *Topic) retrievalQueueExipreMsg() error {
 			// 扫描当前队列
 			data, err := queue.scan()
 			if err != nil {
-				if err != ErrMessageNotExist && err != ErrMessageNotExpire {
+				switch err {
+				case ErrMessageNotExist:
+				case ErrMessageNotExpire:
+				default:
 					t.LogError(err)
 				}
 				break
 			}
+
 			msg := Decode(data)
 			if msg.Id == 0 {
 				msg = nil
@@ -391,16 +416,73 @@ func (t *Topic) retrievalQueueExipreMsg() error {
 	}
 }
 
+// 注册多播客户端
+func (t *Topic) multiple(clientID, bindKey string) error {
+	if !t.isMultiple {
+		return ErrNotMultiple
+	}
+
+	t.multipleMux.Lock()
+
+	if _, ok := t.multipleQueues[clientID]; ok {
+		t.multipleMux.Unlock()
+		return ErrHaveRegistered
+	} else {
+		t.multipleQueues[clientID] = make(chan []byte, t.msgRetry) // 队列长度设置为多长合适？
+		t.multipleMux.Unlock()
+
+		queue := t.getQueueByBindKey(bindKey)
+		if queue == nil {
+			return fmt.Errorf("bindKey:%s can't match queue", bindKey)
+		}
+
+		// TODO 开启 multiple 的循环机制
+		go queue.loopMultiple()
+
+		return nil
+	}
+}
+
 // 消费消息
-func (t *Topic) pop(bindKey string) (*Msg, error) {
+func (t *Topic) pop(clientID, bindKey string) (*Msg, error) {
 	queue := t.getQueueByBindKey(bindKey)
 	if queue == nil {
 		return nil, fmt.Errorf("bindKey:%s can't match queue", bindKey)
 	}
 
-	data, err := queue.read(t.isAutoAck)
-	if err != nil {
-		return nil, err
+	var data = new(readQueueData)
+
+	if t.isMultiple {
+		if clientID == "" {
+			return nil, fmt.Errorf("clientID is empty")
+		}
+
+		// 广播消息
+		t.multipleMux.Lock()
+
+		// 检测是否注册
+		if _, ok := t.multipleQueues[clientID]; !ok {
+			t.multipleMux.Unlock()
+			return nil, fmt.Errorf("%s never registered", clientID)
+		}
+
+		// 如果阻塞了 怎么处理？
+		for {
+			t.multipleMux.Unlock()
+			t.multipleMux.Lock()
+			if len(t.multipleQueues[clientID]) != 0 {
+				break
+			}
+		}
+
+		data.data = <-t.multipleQueues[clientID]
+
+		t.multipleMux.Unlock()
+	} else {
+		data = <-queue.readChan
+		if data == nil {
+			return nil, errors.New("no any message")
+		}
 	}
 
 	msg := Decode(data.data)
@@ -459,6 +541,13 @@ func (t *Topic) set(configure *topicConfigure) error {
 		t.isAutoAck = false
 	}
 
+	// multiple
+	if configure.isMultiple == 1 {
+		t.isMultiple = true
+	} else {
+		t.isMultiple = false
+	}
+
 	// route mode
 	if configure.mode == ROUTE_KEY_MATCH_FULL {
 		t.mode = ROUTE_KEY_MATCH_FULL
@@ -481,7 +570,7 @@ func (t *Topic) set(configure *topicConfigure) error {
 
 // 声明队列，绑定key必须是唯一值
 // 队列名称为<topic_name>_<bind_key>
-func (t *Topic) delcareQueue(bindKey string) error {
+func (t *Topic) declareQueue(bindKey string) error {
 	queue := t.getQueueByBindKey(bindKey)
 	if queue != nil {
 		return fmt.Errorf("bindKey %s has exist.", bindKey)
@@ -523,7 +612,6 @@ func (t *Topic) getQueuesByRouteKey(routeKey string) []*queue {
 			}
 		}
 	}
-	log.Println(queues)
 	return queues
 }
 

@@ -73,7 +73,7 @@ func (gn *Gnode) Run() {
 	gn.ctx = ctx
 	gn.wg.Wrap(NewDispatcher(ctx).Run)
 	gn.wg.Wrap(NewHttpServ(ctx).Run)
-	gn.wg.Wrap(NewTcpServ(ctx).Run)
+	//gn.wg.Wrap(NewTcpServ(ctx).Run)
 
 	// whether to enable cluster, if true,
 	// etcd must be started and the node will registers information to etcd

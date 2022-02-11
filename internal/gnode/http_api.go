@@ -25,10 +25,11 @@ type topicData struct {
 	WaitAckNum  int    `json:"wait_ack_num"`
 	StartTime   string `json:"start_time"`
 	IsAutoAck   bool   `json:"is_auto_ack"`
+	IsMultiple  bool   `json:"is_multiple"`
 }
 
-// curl "http://127.0.0.1:9504/pop?topic=xxx&bindKey=xxx"
-// 消费任务
+// curl "http://127.0.0.1:9504/pop?topic=xxx&bindKey=xxx&clientID=xxx" clientID 在不开启multiple时可以不添加
+// 消费任务 TODO 阻塞消费？
 func (h *HttpApi) Pop(c *gin.Context) {
 	topic := Get(c, "topic")
 	if len(topic) == 0 {
@@ -40,8 +41,13 @@ func (h *HttpApi) Pop(c *gin.Context) {
 		JsonErr(c, errors.New("bindKey is empty"))
 		return
 	}
+	clientID := Get(c, "clientID")
+	if len(clientID) == 0 {
+		h.ctx.Logger.Debug("clientID is empty")
+		//clientID = DEFAULT_KEY
+	}
 
-	msg, err := h.ctx.Dispatcher.pop(topic, bindKey)
+	msg, err := h.ctx.Dispatcher.pop(clientID, topic, bindKey)
 	if err != nil {
 		JsonErr(c, err)
 		msg = nil
@@ -146,10 +152,11 @@ func (h *HttpApi) Config(c *gin.Context) {
 	}
 
 	configure := &topicConfigure{
-		isAutoAck: GetInt(c, "isAutoAck"),
-		mode:      GetInt(c, "mode"),
-		msgTTR:    GetInt(c, "msgTTR"),
-		msgRetry:  GetInt(c, "msgRetry"),
+		isAutoAck:  GetInt(c, "isAutoAck"),
+		isMultiple: GetInt(c, "isMultiple"),
+		mode:       GetInt(c, "mode"),
+		msgTTR:     GetInt(c, "msgTTR"),
+		msgRetry:   GetInt(c, "msgRetry"),
 	}
 
 	err := h.ctx.Dispatcher.set(topic, configure)
@@ -185,6 +192,7 @@ func (h *HttpApi) GetTopicStat(c *gin.Context) {
 	data.DeadNum = t.deadNum
 	data.DelayNum = t.getBucketNum()
 	data.IsAutoAck = t.isAutoAck
+	data.IsMultiple = t.isMultiple
 	data.StartTime = t.startTime.Format("2006-01-02 15:04:05")
 
 	for _, q := range t.queues {
@@ -310,4 +318,30 @@ func (h *HttpApi) Ping(c *gin.Context) {
 	c.Writer.WriteHeader(http.StatusOK)
 	c.Writer.Write([]byte{'O', 'K'})
 
+}
+
+// curl "http://127.0.0.1:9504/multiple?topic=xxx&bindKey=xxx&clientID=xxx"
+// 注册多播客户端
+func (h *HttpApi) Multiple(c *gin.Context) {
+	topic := Get(c, "topic")
+	if len(topic) == 0 {
+		JsonErr(c, errors.New("topic is empty"))
+		return
+	}
+	bindKey := Get(c, "bindKey")
+	if len(bindKey) == 0 {
+		JsonErr(c, errors.New("bindKey is empty"))
+		return
+	}
+	clientID := Get(c, "clientID")
+	if len(clientID) == 0 {
+		JsonErr(c, errors.New("clientID is empty"))
+		return
+	}
+
+	if err := h.ctx.Dispatcher.multiple(clientID, topic, bindKey); err != nil {
+		JsonErr(c, err)
+	} else {
+		JsonSuccess(c, "success")
+	}
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"impact-eintr/esq/pkg/logs"
 	"impact-eintr/esq/pkg/utils"
+	"log"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -142,10 +143,11 @@ func (d *Dispatcher) scanLoop() {
 
 		// 如果已处理个数超过选择topic个数的四分之一,说明这批topic还是有很大几率有消息的
 		// 继续重新随机挑选topic处理,否则进入下一个定时器
-		// todo: 这个算法的规则是优先执行选中topic消息,直到没有消息后,才会去进行下轮遍历,
+		// TODO: 这个算法的规则是优先执行选中topic消息,直到没有消息后,才会去进行下轮遍历,
 		// 所以若被选中的topic一直有消息产生,则会导致其他新加入topic的消息无法被即时处理
 		// 如果你的业务是很频繁推送多个topic,并且是延迟消息,可以尽量调大selectNum的值
 		if float64(hasMsgNum)/float64(selectNum) > 0.25 {
+			log.Println("goto loop")
 			goto loop
 		}
 	}
@@ -196,7 +198,7 @@ func (d *Dispatcher) resizePool(topicNum int, workCh chan *Topic, closeCh chan i
 
 	// 当需要的woker数量小于池大小时,发送关闭信号到closeCh管道
 	// worker从closeCh管道收到消息后,关闭退出
-	// todo 目前topic是不会自己消失的,所以需要一个机制,当topic没有客户端连接时,关闭topic
+	// TODO 目前topic是不会自己消失的,所以需要一个机制,当topic没有客户端连接时,关闭topic
 	if workerNum < d.poolSize {
 		d.LogInfo("reduce scan-Worker for pool", workerNum, d.poolSize)
 		for i := d.poolSize - workerNum; i > 0; i-- {
@@ -301,10 +303,16 @@ func (d *Dispatcher) push(name string, routeKey string, data []byte, delay int) 
 	return msgId, err
 }
 
-// consume message
-func (d *Dispatcher) pop(name, bindKey string) (*Msg, error) {
+// register multiple client
+func (d *Dispatcher) multiple(client, name, bindKey string) error {
 	topic := d.GetTopic(name)
-	return topic.pop(bindKey)
+	return topic.multiple(client, bindKey)
+}
+
+// consume message
+func (d *Dispatcher) pop(clientID, name, bindKey string) (*Msg, error) {
+	topic := d.GetTopic(name)
+	return topic.pop(clientID, bindKey)
 }
 
 // consume dead message
@@ -328,7 +336,7 @@ func (d *Dispatcher) set(name string, configure *topicConfigure) error {
 // declare queue
 func (d *Dispatcher) declareQueue(queueName, bindKey string) error {
 	topic := d.GetTopic(queueName)
-	return topic.delcareQueue(bindKey)
+	return topic.declareQueue(bindKey)
 }
 
 // subscribe channel

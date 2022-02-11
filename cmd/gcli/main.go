@@ -3,18 +3,34 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"impact-eintr/esq/internal/gnode"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 )
 
-var pushBase = "http://127.0.0.1:9504/push"
-var popBase = "http://127.0.0.1:9504/pop?topic=%s&bindKey=%s"
-var ackBase = "http://127.0.0.1:9504/ack?msgId=%s&topic=%s&bindKey=%s"
+type WaitGroupWrapper struct {
+	sync.WaitGroup
+}
 
-type Client struct{}
+func (w *WaitGroupWrapper) Wrap(cb func()) {
+	w.Add(1)
+	go func() {
+		cb()
+		w.Done()
+	}()
+}
+
+var pushBase = "http://127.0.0.1:9504/push"
+var popBase = "http://127.0.0.1:9504/pop?topic=%s&bindKey=%s&clientID=%s"
+var ackBase = "http://127.0.0.1:9504/ack?msgId=%s&topic=%s&bindKey=%s"
+var multipleBase = "http://127.0.0.1:9504/multiple?topic=%s&bindKey=%s&clientID=%s"
+
+type Client struct {
+	WaitGroupWrapper
+}
 
 func (c *Client) Push() {
 	cli := &http.Client{}
@@ -32,9 +48,9 @@ func (c *Client) Push() {
 	log.Println(string(b))
 }
 
-func (c *Client) Pop() {
+func (c *Client) Pop(clientID string) {
 	cli := &http.Client{}
-	resp, err := cli.Get(fmt.Sprintf(popBase, "heartbeat", "test"))
+	resp, err := cli.Get(fmt.Sprintf(popBase, "heartbeat", "test", clientID))
 	if err != nil {
 		log.Fatalln(err)
 	}
@@ -45,12 +61,14 @@ func (c *Client) Pop() {
 	}
 	m := make(map[string]interface{})
 	json.Unmarshal(b, &m)
+	log.Println(m)
 
-	msg := &gnode.RespMsgData{}
-	b, _ = json.Marshal(m["data"])
-	json.Unmarshal(b, &msg)
+	//msg := &gnode.RespMsgData{}
+	//b, _ = json.Marshal(m["data"])
+	//json.Unmarshal(b, &msg)
 
-	c.ack(msg.Id)
+	//log.Printf("%#v", *msg)
+	//c.ack(msg.Id)
 }
 
 func (c *Client) ack(id string) {
@@ -67,8 +85,73 @@ func (c *Client) ack(id string) {
 	log.Println(string(b))
 }
 
+// curl "http://127.0.0.1:9504/multiple?topic=xxx&bindKey=xxx&clientID=xxx"
+func (c *Client) multiple(id string) {
+	cli := &http.Client{}
+	_, err := cli.Get(fmt.Sprintf(multipleBase, "heartbeat", "test", id))
+	if err != nil {
+		log.Fatalln(err)
+	}
+}
+
+var (
+	cli1 = "clientNo.1"
+	cli2 = "clientNo.2"
+	cli3 = "clientNo.3"
+	cli4 = "clientNo.4"
+	cli5 = "clientNo.5"
+	cli6 = "clientNo.6"
+)
+
 func main() {
 	cli := &Client{}
-	cli.Push()
-	cli.Pop()
+	cli.multiple(cli1)
+	cli.multiple(cli2)
+	cli.multiple(cli3)
+	cli.multiple(cli4)
+	cli.multiple(cli5)
+	cli.multiple(cli6)
+
+	var MAX = 5000
+
+	cli.Wrap(func() {
+		for i := 0; i < MAX; i++ {
+			cli.Push()
+			time.Sleep(1 * time.Millisecond)
+		}
+	})
+
+	cli.Wrap(func() {
+		for i := 0; i < MAX; i++ {
+			cli.Pop(cli1)
+		}
+	})
+	cli.Wrap(func() {
+		for i := 0; i < MAX; i++ {
+			cli.Pop(cli2)
+		}
+	})
+	cli.Wrap(func() {
+		for i := 0; i < MAX; i++ {
+			cli.Pop(cli3)
+		}
+	})
+	cli.Wrap(func() {
+		for i := 0; i < MAX; i++ {
+			cli.Pop(cli4)
+		}
+	})
+	cli.Wrap(func() {
+		for i := 0; i < MAX; i++ {
+			cli.Pop(cli5)
+		}
+	})
+	cli.Wrap(func() {
+		for i := 0; i < MAX; i++ {
+			cli.Pop(cli6)
+		}
+	})
+
+	cli.Wait()
+
 }
