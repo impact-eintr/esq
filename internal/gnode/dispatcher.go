@@ -3,14 +3,14 @@ package gnode
 import (
 	"errors"
 	"fmt"
-	"impact-eintr/esq/pkg/logs"
-	"impact-eintr/esq/pkg/utils"
 	"log"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/impact-eintr/bolt"
+	"github.com/impact-eintr/esq/pkg/logs"
+	"github.com/impact-eintr/esq/pkg/utils"
 )
 
 // dispatcher 调度器,负责管理topic

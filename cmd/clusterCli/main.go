@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"impact-eintr/esq/internal/gnode"
 	"io/ioutil"
 	"log"
 	"math/rand"
@@ -16,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/impact-eintr/esq/internal/gnode"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
 

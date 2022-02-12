@@ -26,14 +26,15 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"impact-eintr/esq/pkg/logs"
-	"impact-eintr/esq/pkg/utils"
 	"log"
 	"os"
 	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
+
+	"github.com/impact-eintr/esq/pkg/logs"
+	"github.com/impact-eintr/esq/pkg/utils"
 )
 
 // header: flag(1 byte)+status(2 byte)+msg_len(4 byte)+msg(? byte)

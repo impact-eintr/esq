@@ -1,8 +1,8 @@
 package gnode
 
 import (
-	"impact-eintr/esq/configs"
-	"impact-eintr/esq/pkg/logs"
+	"github.com/impact-eintr/esq/configs"
+	"github.com/impact-eintr/esq/pkg/logs"
 )
 
 type Context struct {

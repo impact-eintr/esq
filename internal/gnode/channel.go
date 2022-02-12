@@ -2,11 +2,12 @@ package gnode
 
 import (
 	"fmt"
-	"impact-eintr/esq/pkg/logs"
-	"impact-eintr/esq/pkg/utils"
 	"log"
 	"sync"
 	"time"
+
+	"github.com/impact-eintr/esq/pkg/logs"
+	"github.com/impact-eintr/esq/pkg/utils"
 )
 
 // TODO 一种抽象的通道

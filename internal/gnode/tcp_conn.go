@@ -6,13 +6,14 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"impact-eintr/esq/pkg/logs"
-	"impact-eintr/esq/pkg/utils"
 	"io"
 	"net"
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/impact-eintr/esq/pkg/logs"
+	"github.com/impact-eintr/esq/pkg/utils"
 )
 
 const (

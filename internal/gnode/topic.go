@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"impact-eintr/esq/pkg/logs"
-	"impact-eintr/esq/pkg/utils"
 	"io/ioutil"
 	"os"
 	"regexp"
@@ -15,6 +13,8 @@ import (
 	"time"
 
 	"github.com/impact-eintr/bolt"
+	"github.com/impact-eintr/esq/pkg/logs"
+	"github.com/impact-eintr/esq/pkg/utils"
 )
 
 const (

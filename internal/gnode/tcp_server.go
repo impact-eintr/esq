@@ -3,11 +3,12 @@ package gnode
 import (
 	"bufio"
 	"fmt"
-	"impact-eintr/esq/pkg/logs"
-	"impact-eintr/esq/pkg/utils"
 	"log"
 	"net"
 	"sync"
+
+	"github.com/impact-eintr/esq/pkg/logs"
+	"github.com/impact-eintr/esq/pkg/utils"
 )
 
 type TcpServ struct {

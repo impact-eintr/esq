@@ -1,13 +1,13 @@
 package main
 
 import (
-	"impact-eintr/esq/internal/gnode"
 	"log"
 	"net/http"
 	_ "net/http/pprof"
 	"os"
 	"sync"
 
+	"github.com/impact-eintr/esq/internal/gnode"
 	"github.com/kardianos/service"
 )
 

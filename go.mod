@@ -1,4 +1,4 @@
-module impact-eintr/esq
+module github.com/impact-eintr/esq
 
 go 1.17
 

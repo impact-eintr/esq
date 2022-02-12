@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"impact-eintr/esq/pkg/logs"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -15,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/impact-eintr/esq/pkg/logs"
 )
 
 const (

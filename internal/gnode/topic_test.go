@@ -1,11 +1,12 @@
 package gnode
 
 import (
-	"impact-eintr/esq/configs"
 	"net"
 	"os"
 	"testing"
 	"time"
+
+	"github.com/impact-eintr/esq/configs"
 )
 
 // 测试推送

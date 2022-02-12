@@ -3,13 +3,14 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"impact-eintr/esq/internal/gnode"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/impact-eintr/esq/internal/gnode"
 )
 
 type WaitGroupWrapper struct {
