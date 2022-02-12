@@ -63,7 +63,7 @@ type queue struct {
 	file     *os.File // 队列文件指针
 	ctx      *Context
 
-	// TODO 一些队列可靠性与特性的实现机制
+	// 一些队列可靠性与特性的实现机制
 	bindKey  string           // 绑定键 topic.name_queue.bindKey 是队列的唯一标识
 	waitAck  map[uint64]int64 // 等待确认消息 消息ID 和 消息位置的映射关系
 	readChan chan *readQueueData
@@ -73,7 +73,6 @@ type queue struct {
 	exitChan          chan struct{}
 	notifyReadMsgChan chan bool
 	sync.RWMutex
-	sync.Once
 }
 
 type readQueueData struct {
@@ -153,24 +152,6 @@ func (q *queue) loopRead() {
 		}
 	}
 }
-
-//func (q *queue) loopMultiple() {
-//	q.Do(func() {
-//		for {
-//			select {
-//			case data := <-q.readChan:
-//				q.topic.multipleMux.RLock()
-//				for _, ch := range q.topic.multipleQueues {
-//					ch <- data.data
-//				}
-//				q.topic.multipleMux.RUnlock()
-//			case <-q.exitChan:
-//				log.Println("multiple exit!!!")
-//				return
-//			}
-//		}
-//	})
-//}
 
 // 通知 queue 中运行的goroutine 们退出 已收录到 破大防 中
 func (q *queue) exit() {

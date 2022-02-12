@@ -41,10 +41,6 @@ func (h *HttpApi) Pop(c *gin.Context) {
 		JsonErr(c, errors.New("bindKey is empty"))
 		return
 	}
-	//clientID := Get(c, "clientID")
-	//if len(clientID) == 0 {
-	//	h.ctx.Logger.Debug("clientID is empty")
-	//}
 
 	msg, err := h.ctx.Dispatcher.pop(topic, bindKey)
 	if err != nil {
@@ -316,31 +312,4 @@ func (h *HttpApi) GetQueuesByTopic(c *gin.Context) {
 func (h *HttpApi) Ping(c *gin.Context) {
 	c.Writer.WriteHeader(http.StatusOK)
 	c.Writer.Write([]byte{'O', 'K'})
-
 }
-
-// curl "http://127.0.0.1:9504/multiple?topic=xxx&bindKey=xxx&clientID=xxx"
-// 注册多播客户端
-//func (h *HttpApi) Multiple(c *gin.Context) {
-//	topic := Get(c, "topic")
-//	if len(topic) == 0 {
-//		JsonErr(c, errors.New("topic is empty"))
-//		return
-//	}
-//	bindKey := Get(c, "bindKey")
-//	if len(bindKey) == 0 {
-//		JsonErr(c, errors.New("bindKey is empty"))
-//		return
-//	}
-//	clientID := Get(c, "clientID")
-//	if len(clientID) == 0 {
-//		JsonErr(c, errors.New("clientID is empty"))
-//		return
-//	}
-//
-//	if err := h.ctx.Dispatcher.multiple(clientID, topic, bindKey); err != nil {
-//		JsonErr(c, err)
-//	} else {
-//		JsonSuccess(c, "success")
-//	}
-//}

@@ -73,7 +73,7 @@ func (gn *Gnode) Run() {
 	gn.ctx = ctx
 	gn.wg.Wrap(NewDispatcher(ctx).Run)
 	gn.wg.Wrap(NewHttpServ(ctx).Run)
-	//gn.wg.Wrap(NewTcpServ(ctx).Run)
+	gn.wg.Wrap(NewTcpServ(ctx).Run)
 
 	// whether to enable cluster, if true,
 	// etcd must be started and the node will registers information to etcd
@@ -152,7 +152,8 @@ func (gn *Gnode) keepAlive() (<-chan *clientv3.LeaseKeepAliveResponse, error) {
 	}
 	gn.etcd.leaseId = resp.ID
 
-	key := fmt.Sprintf("/gmq/node-%d", gn.cfg.NodeId)
+	key := fmt.Sprintf("/esq/node-%d", gn.cfg.NodeId)
+	log.Println(key)
 	info := make(map[string]string)
 	info["tcp_addr"] = gn.cfg.TcpServAddr
 	info["http_addr"] = gn.cfg.HttpServAddr
@@ -198,6 +199,7 @@ func NewGnodeConfig() *configs.GnodeConfig {
 	// command options
 	var endpoints string
 	flag.StringVar(&endpoints, "etcd_endpoints", cfg.TcpServAddr, "etcd endpoints")
+	flag.BoolVar(&cfg.EnableCluster, "enable_cluster", cfg.EnableCluster, "enable cluster")
 	flag.StringVar(&cfg.TcpServAddr, "tcp_addr", cfg.TcpServAddr, "tcp address")
 	flag.StringVar(&cfg.GregisterAddr, "register_addr", cfg.GregisterAddr, "register address")
 	flag.StringVar(&cfg.HttpServAddr, "http_addr", cfg.HttpServAddr, "http address")
@@ -221,6 +223,7 @@ func NewGnodeConfig() *configs.GnodeConfig {
 	if err := cfg.Validate(); err != nil {
 		log.Fatalf("config file %v error, %v\n", *cfgFile, err)
 	}
+	log.Printf("%#v", cfg)
 
 	return cfg
 }
@@ -249,6 +252,8 @@ func LoadConfigFromFile(cfgFile string) (*configs.GnodeConfig, error) {
 	cfg.ReportTcpAddr = c.Section("node").Key("reportTcpaddr").String()
 	cfg.ReportHttpAddr = c.Section("node").Key("reportHttpaddr").String()
 	cfg.DataSavePath = c.Section("node").Key("dataSavePath").String()
+	cfg.EnableCluster, err = c.Section("node").Key("enableCluster").Bool()
+	log.Println(err)
 
 	// log config
 	cfg.LogFilename = c.Section("log").Key("filename").String()

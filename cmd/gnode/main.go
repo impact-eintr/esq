@@ -3,7 +3,6 @@ package main
 import (
 	"impact-eintr/esq/internal/gnode"
 	"log"
-	"net/http"
 	_ "net/http/pprof"
 	"os"
 	"sync"
@@ -28,11 +27,11 @@ func (p *program) Start(s service.Service) error {
 	}()
 
 	// listen pprof
-	go func() {
-		if err := http.ListenAndServe("0.0.0.0:8877", nil); err != nil {
-			log.Println(err)
-		}
-	}()
+	//go func() {
+	//	if err := http.ListenAndServe("0.0.0.0:8877", nil); err != nil {
+	//		log.Println(err)
+	//	}
+	//}()
 
 	return nil
 

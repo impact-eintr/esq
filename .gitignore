@@ -19,3 +19,5 @@
 *data*
 cmd/gnode/gnode
 cmd/gcli/gcli
+cmd/singleCli/singleCli
+cmd/clusterCli.clusterCli

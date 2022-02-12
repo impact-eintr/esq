@@ -57,26 +57,21 @@ type Topic struct {
 	waitAckMux sync.Mutex
 	queueMux   sync.Mutex
 	sync.Mutex
-
-	//multipleQueues map[string]chan []byte
-	//multipleMux    sync.RWMutex
 }
 
 type topicConfigure struct {
 	isAutoAck int // 是否自动确认消息，1是，0否，默认为0
-	//isMultiple int // 是否是多播频道，1是，0否，默认为0
-	msgTTR   int // 消息执行超时时间，在msgTTR内没有确认消息，则消息重新入队，再次被消费,默认为30
-	msgRetry int // 消息重试次数，超过msgRetry次数后，消息会被写入到死信队列，默认为5
-	mode     int // 路由key匹配模式，1全匹配，2模糊匹配，默认为1
+	msgTTR    int // 消息执行超时时间，在msgTTR内没有确认消息，则消息重新入队，再次被消费,默认为30
+	msgRetry  int // 消息重试次数，超过msgRetry次数后，消息会被写入到死信队列，默认为5
+	mode      int // 路由key匹配模式，1全匹配，2模糊匹配，默认为1
 }
 
 type TopicMeta struct {
-	Mode      int   `json:"mode"`
-	PopNum    int64 `json:"pop_num"`
-	PushNum   int64 `json:"push_num"`
-	DeadNum   int64 `json:"dead_num"`
-	IsAutoAck bool  `json:"is_auto_ack"`
-	//IsMultiple  bool        `json:"is_multiple"`
+	Mode        int         `json:"mode"`
+	PopNum      int64       `json:"pop_num"`
+	PushNum     int64       `json:"push_num"`
+	DeadNum     int64       `json:"dead_num"`
+	IsAutoAck   bool        `json:"is_auto_ack"`
 	Queues      []QueueMeta `json:"queues"`
 	DeataQueues []QueueMeta `json:"dead_queues"`
 }
@@ -104,16 +99,11 @@ func NewTopic(name string, ctx *Context) *Topic {
 		startTime:  time.Now(),
 		queues:     make(map[string]*queue),
 		deadQueues: make(map[string]*queue),
-		//multipleQueues: make(map[string]chan []byte),
 	}
 
 	t.init()
 	return t
 }
-
-// TODO ACK 相关
-// TODO 消费速度不同
-// TODO 消费者退出
 
 // 初始化
 func (t *Topic) init() {
@@ -155,7 +145,6 @@ func (t *Topic) init() {
 	t.pushNum = meta.PushNum
 	t.deadNum = meta.DeadNum
 	t.isAutoAck = meta.IsAutoAck
-	//t.isMultiple = meta.IsMultiple
 
 	t.queueMux.Lock()
 	defer t.queueMux.Unlock()
@@ -419,33 +408,6 @@ func (t *Topic) retrievalQueueExipreMsg() error {
 	}
 }
 
-// 注册多播客户端
-//func (t *Topic) multiple(clientID, bindKey string) error {
-//	if !t.isMultiple {
-//		return ErrNotMultiple
-//	}
-//
-//	t.multipleMux.Lock()
-//
-//	if _, ok := t.multipleQueues[clientID]; ok {
-//		t.multipleMux.Unlock()
-//		return ErrHaveRegistered
-//	} else {
-//		t.multipleQueues[clientID] = make(chan []byte, t.msgRetry) // TODO 队列长度设置为多长合适？
-//		t.multipleMux.Unlock()
-//
-//		queue := t.getQueueByBindKey(bindKey)
-//		if queue == nil {
-//			return fmt.Errorf("bindKey:%s can't match queue", bindKey)
-//		}
-//
-//		// 开启 multiple 的循环机制
-//		go queue.loopMultiple()
-//
-//		return nil
-//	}
-//}
-
 // 消费消息
 func (t *Topic) pop(bindKey string) (*Msg, error) {
 	queue := t.getQueueByBindKey(bindKey)
@@ -453,45 +415,10 @@ func (t *Topic) pop(bindKey string) (*Msg, error) {
 		return nil, fmt.Errorf("bindKey:%s can't match queue", bindKey)
 	}
 
-	var data = new(readQueueData)
-
-	data = <-queue.readChan
+	data := <-queue.readChan
 	if data == nil {
 		return nil, errors.New("no any message")
 	}
-
-	//if t.isMultiple {
-	//	if clientID == "" {
-	//		return nil, fmt.Errorf("clientID is empty")
-	//	}
-
-	//	// 广播消息
-	//	t.multipleMux.RLock()
-
-	//	// 检测是否注册
-	//	if _, ok := t.multipleQueues[clientID]; !ok {
-	//		t.multipleMux.RUnlock()
-	//		return nil, fmt.Errorf("%s never registered", clientID)
-	//	}
-
-	//	// 如果阻塞了 怎么处理？
-	//	for {
-	//		t.multipleMux.RUnlock()
-	//		t.multipleMux.RLock()
-	//		if len(t.multipleQueues[clientID]) != 0 {
-	//			break
-	//		}
-	//	}
-
-	//	data.data = <-t.multipleQueues[clientID]
-
-	//	t.multipleMux.RUnlock()
-	//} else {
-	//	data = <-queue.readChan
-	//	if data == nil {
-	//		return nil, errors.New("no any message")
-	//	}
-	//}
 
 	msg := Decode(data.data)
 	if msg.Id == 0 {
@@ -548,13 +475,6 @@ func (t *Topic) set(configure *topicConfigure) error {
 	} else {
 		t.isAutoAck = false
 	}
-
-	// multiple
-	//if configure.isMultiple == 1 {
-	//	t.isMultiple = true
-	//} else {
-	//	t.isMultiple = false
-	//}
 
 	// route mode
 	if configure.mode == ROUTE_KEY_MATCH_FULL {
