@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/impact-eintr/esq/internal/gnode"
+	"github.com/impact-eintr/esq/gnode"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
 

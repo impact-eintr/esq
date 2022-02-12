@@ -7,7 +7,7 @@ import (
 	"os"
 	"sync"
 
-	"github.com/impact-eintr/esq/internal/gnode"
+	"github.com/impact-eintr/esq/gnode"
 	"github.com/kardianos/service"
 )
 
