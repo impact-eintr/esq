@@ -234,6 +234,32 @@ func GetClientByWeightMode(endpoints string) *Client {
 	return nil
 }
 
+func GetClientByMaxWeightMode(endpoints string) *Client {
+	if len(clients) == 0 {
+		var err error
+		clients, err = InitClients(endpoints)
+		if err != nil {
+			log.Fatalln(err)
+		}
+	}
+
+	max := 0
+	for _, c := range clients {
+		if max < c.weight {
+			max = c.weight
+		}
+	}
+
+	for _, c := range clients {
+		if c.weight == max {
+			log.Println(*c)
+			return c
+		}
+	}
+
+	return nil
+}
+
 // 随机模式
 func GetClientByRandomMode(endpoints string) *Client {
 	if len(clients) == 0 {
@@ -275,11 +301,13 @@ func main() {
 	case "1":
 		cli = GetClientByWeightMode("127.0.0.1:2379")
 	case "2":
-		cli = GetClientByRandomMode("127.0.0.1:2379")
+		cli = GetClientByMaxWeightMode("127.0.0.1:2379")
 	case "3":
+		cli = GetClientByRandomMode("127.0.0.1:2379")
+	case "4":
 		cli = GetClientByAvgMode("127.0.0.1:2379")
 	default:
-		log.Fatalf("invalid type %s, should be 1：权重 2：随机 3：平均", os.Args[1])
+		log.Fatalf("invalid type %s, should be 1：权重 2：最大权重 3：随机 4：平均", os.Args[1])
 	}
 
 	// curl -s "http://cli.addr/config?topic=heartbeat&isAutoAck=1&mode=2&msgTTR=30&msgRetry=5"
@@ -287,7 +315,7 @@ func main() {
 	cli.declare("heartbeat", cli1)
 	cli.declare("heartbeat", cli2)
 
-	var MAX = 20
+	var MAX = 5
 
 	cli.Wrap(func() {
 		for i := 0; i < MAX; i++ {
