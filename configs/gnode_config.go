@@ -13,6 +13,7 @@ type GnodeConfig struct {
 	MsgMaxPushNum     int
 	DataSavePath      string
 	EnableCluster     bool
+	EnableRaftd       bool
 	HeartbeatInterval int
 
 	// gresiter
@@ -20,6 +21,9 @@ type GnodeConfig struct {
 
 	// etcd
 	EtcdEndPoints []string
+
+	// raftd
+	RaftdEndPoint string
 
 	// http server
 	HttpServAddr      string
@@ -84,6 +88,11 @@ func (c *GnodeConfig) SetDefault() {
 	// etcd
 	if len(c.EtcdEndPoints) == 0 {
 		c.EtcdEndPoints = append(c.EtcdEndPoints, "127.0.0.1:2379")
+	}
+
+	// raftd
+	if len(c.RaftdEndPoint) == 0 {
+		c.RaftdEndPoint = "127.0.0.1:8001"
 	}
 
 	// 数据存储目录,相对于命令执行所在目录,例如在/home执行启动命令,将会生成/home/data目录

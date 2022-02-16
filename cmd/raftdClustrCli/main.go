@@ -1,9 +1,9 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/impact-eintr/esq/gnode"
-	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
 const (
@@ -68,7 +67,6 @@ func (w *WaitGroupWrapper) Wrap(cb func()) {
 }
 
 type Client struct {
-	//conn     net.Conn
 	addr   string
 	weight int
 	WaitGroupWrapper
@@ -134,11 +132,11 @@ func (c *Client) Pop(topic, bindKey string) {
 			log.Fatalln(err)
 		}
 		log.Println(bindKey, "消费了", msg.Body)
-		c.ack(topic, bindKey, msg.Id)
+		c.Ack(topic, bindKey, msg.Id)
 	}
 }
 
-func (c *Client) declare(topic, bindKey string) {
+func (c *Client) Declare(topic, bindKey string) {
 	cli := &http.Client{}
 	resp, err := cli.Get(fmt.Sprintf(declereBase, c.addr, topic, bindKey))
 	if err != nil {
@@ -147,7 +145,7 @@ func (c *Client) declare(topic, bindKey string) {
 	defer resp.Body.Close()
 }
 
-func (c *Client) config(topic string, isAutoAck, mode, msgTTR, msgRetry int) {
+func (c *Client) Config(topic string, isAutoAck, mode, msgTTR, msgRetry int) {
 	cli := &http.Client{}
 	resp, err := cli.Get(fmt.Sprintf(configBase, c.addr, topic, isAutoAck, mode, msgTTR, msgRetry))
 	if err != nil {
@@ -156,7 +154,7 @@ func (c *Client) config(topic string, isAutoAck, mode, msgTTR, msgRetry int) {
 	defer resp.Body.Close()
 }
 
-func (c *Client) ack(topic, bindKey, id string) {
+func (c *Client) Ack(topic, bindKey, id string) {
 	cli := &http.Client{}
 	resp, err := cli.Get(fmt.Sprintf(ackBase, c.addr, id, topic, bindKey))
 	if err != nil {
@@ -171,33 +169,37 @@ func InitClients(endpoints string) ([]*Client, error) {
 	if len(endpoints) == 0 {
 		return nil, fmt.Errorf("endpoints is empty.")
 	}
+	var r http.Request
+	r.ParseForm()
+	r.Form.Add("prefix", "/esq/node")
+	bodystr := strings.TrimSpace(r.Form.Encode())
 
-	cli, err := clientv3.New(clientv3.Config{
-		Endpoints:   strings.Split(endpoints, ","),
-		DialTimeout: 3 * time.Second,
-	})
+	request, err := http.NewRequest("POST", fmt.Sprintf("http://"+endpoints+"/lease/kv/%s", "nodeinfo"),
+		strings.NewReader(bodystr))
 	if err != nil {
-		return nil, fmt.Errorf("can't new etcd client.")
+		return nil, err
+	}
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.Header.Set("Connection", "Keep-Alive")
+	resp, err := http.DefaultClient.Do(request)
+	if err != nil {
+		return nil, err
+	}
+	infobyte, _ := ioutil.ReadAll(resp.Body) // 读出来的是一个数组 所以至少有 [] 长度为2
+	if len(infobyte) < 3 {
+		return nil, fmt.Errorf("暂时没有数据")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	resp, err := cli.Get(ctx, "/esq/node", clientv3.WithPrefix())
-	cancel()
+	var clients []*Client
+	infos := make([]map[string]string, 0)
+	err = json.Unmarshal(infobyte, &infos)
 	if err != nil {
 		return nil, err
 	}
 
-	var clients []*Client
-	node := make(map[string]string)
-	for _, ev := range resp.Kvs {
-		fmt.Printf("%s => %s\n", ev.Key, ev.Value)
-		if err := json.Unmarshal(ev.Value, &node); err != nil {
-			return nil, err
-		}
-
-		//tcpAddr := node["tcp_addr"]
-		httpAddr := node["http_addr"]
-		weight, _ := strconv.Atoi(node["weight"])
+	for _, info := range infos {
+		httpAddr := info["http_addr"]
+		weight, _ := strconv.Atoi(info["weight"])
 		c := NewClient(httpAddr, weight)
 		clients = append(clients, c)
 	}
@@ -234,6 +236,7 @@ func GetClientByWeightMode(endpoints string) *Client {
 	return nil
 }
 
+// 最大权重模式
 func GetClientByMaxWeightMode(endpoints string) *Client {
 	if len(clients) == 0 {
 		var err error
@@ -252,7 +255,6 @@ func GetClientByMaxWeightMode(endpoints string) *Client {
 
 	for _, c := range clients {
 		if c.weight == max {
-			log.Println(*c)
 			return c
 		}
 	}
@@ -296,24 +298,27 @@ func GetClientByAvgMode(endpoints string) *Client {
 
 func main() {
 	var cli = new(Client)
+	var raftdEndPoint string
+	flag.StringVar(&raftdEndPoint, "raftd_endpoint", "127.0.0.1:8001", "raftd endpoint")
+	flag.Parse()
 
 	switch os.Args[1] {
 	case "1":
-		cli = GetClientByWeightMode("127.0.0.1:2379")
+		cli = GetClientByWeightMode(raftdEndPoint)
 	case "2":
-		cli = GetClientByMaxWeightMode("127.0.0.1:2379")
+		cli = GetClientByMaxWeightMode(raftdEndPoint)
 	case "3":
-		cli = GetClientByRandomMode("127.0.0.1:2379")
+		cli = GetClientByRandomMode(raftdEndPoint)
 	case "4":
-		cli = GetClientByAvgMode("127.0.0.1:2379")
+		cli = GetClientByAvgMode(raftdEndPoint)
 	default:
 		log.Fatalf("invalid type %s, should be 1：权重 2：最大权重 3：随机 4：平均", os.Args[1])
 	}
 
 	// curl -s "http://cli.addr/config?topic=heartbeat&isAutoAck=1&mode=2&msgTTR=30&msgRetry=5"
-	cli.config("heartbeat", 0, 2, 30, 5)
-	cli.declare("heartbeat", cli1)
-	cli.declare("heartbeat", cli2)
+	cli.Config("heartbeat", 0, 2, 30, 5)
+	cli.Declare("heartbeat", cli1)
+	cli.Declare("heartbeat", cli2)
 
 	var MAX = 5
 

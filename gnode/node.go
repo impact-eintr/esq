@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"log"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -28,12 +30,23 @@ type Gnode struct {
 	cfg      *configs.GnodeConfig
 	ctx      *Context
 	etcd     etcd
+	raftd    raftd
 }
 
-// TODO 后续看能不能把 etcd 替换了
 type etcd struct {
 	cli     *clientv3.Client
 	leaseId clientv3.LeaseID
+}
+
+type RClient struct {
+	endpoint       string // client 的初始集群连接点
+	leaderendpoint string // raftd 集群 leader 的地址
+}
+
+// TODO etcd的替代
+type raftd struct {
+	cli     *RClient // 之后把这个客户端封装一下
+	leaseId uint64   // 租约号
 }
 
 func New(cfg *configs.GnodeConfig) *Gnode {
@@ -90,39 +103,51 @@ func (gn *Gnode) Run() {
 
 // the node will registers information to etcd
 func (gn *Gnode) register() error {
-	cli, err := clientv3.New(clientv3.Config{
-		Endpoints:   gn.cfg.EtcdEndPoints,
-		DialTimeout: 2 * time.Second,
-	})
-	if err != nil {
-		return fmt.Errorf("create etcd client failed, %s\n", err)
+	if gn.cfg.EnableRaftd {
+		cli := &RClient{
+			endpoint: gn.cfg.RaftdEndPoint,
+		}
+		gn.raftd.cli = cli
+		gn.wg.Wrap(func() {
+			gn.raftdKeepAlive()
+		})
+
+		return nil
+	} else {
+		cli, err := clientv3.New(clientv3.Config{
+			Endpoints:   gn.cfg.EtcdEndPoints,
+			DialTimeout: 2 * time.Second,
+		})
+		if err != nil {
+			return fmt.Errorf("create etcd client failed, %s\n", err)
+		}
+
+		gn.etcd.cli = cli
+		ch, err := gn.etcdKeepAlive()
+		if err != nil {
+			return err
+		}
+
+		gn.wg.Wrap(func() {
+			gn.etcdRecvLeaseResponse(ch)
+		})
+
+		return nil
 	}
-
-	gn.etcd.cli = cli
-	ch, err := gn.keepAlive()
-	if err != nil {
-		return err
-	}
-
-	gn.wg.Wrap(func() {
-		gn.recvLeaseResponse(ch)
-	})
-
-	return nil
 }
 
-func (gn *Gnode) recvLeaseResponse(ch <-chan *clientv3.LeaseKeepAliveResponse) {
+func (gn *Gnode) etcdRecvLeaseResponse(ch <-chan *clientv3.LeaseKeepAliveResponse) {
 	for {
 		select {
 		case <-gn.exitChan:
-			gn.revoke()
+			gn.etcdRevoke()
 			return
 		case <-gn.etcd.cli.Ctx().Done():
 			return
 		case ka, ok := <-ch:
 			if !ok {
 				gn.ctx.Logger.Info("keep alive channel closed")
-				gn.revoke()
+				gn.etcdRevoke()
 				return
 			} else {
 				gn.ctx.Logger.Debug(fmt.Sprintf("etcd lease keep alive, ttl:%d", ka.TTL))
@@ -132,7 +157,7 @@ func (gn *Gnode) recvLeaseResponse(ch <-chan *clientv3.LeaseKeepAliveResponse) {
 }
 
 // revoke the lease
-func (gn *Gnode) revoke() {
+func (gn *Gnode) etcdRevoke() {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	_, err := gn.etcd.cli.Revoke(ctx, gn.etcd.leaseId)
 	cancel()
@@ -143,8 +168,20 @@ func (gn *Gnode) revoke() {
 	gn.ctx.Logger.Info("etcd lease has revoke.")
 }
 
+func (gn *Gnode) raftdRevoke(leaseId string) {
+	// 撤销租约
+	// curl -s -XPOST 127.0.0.1:8001/lease/revoke/:id
+	cli := &http.Client{}
+	resp, err := cli.Post("http://"+fmt.Sprintf(gn.cfg.RaftdEndPoint+"/lease/revoke/%s", leaseId),
+		"application/json", nil)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	defer resp.Body.Close()
+}
+
 // keep the lease alive to ensure that the node is alive
-func (gn *Gnode) keepAlive() (<-chan *clientv3.LeaseKeepAliveResponse, error) {
+func (gn *Gnode) etcdKeepAlive() (<-chan *clientv3.LeaseKeepAliveResponse, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	resp, err := gn.etcd.cli.Grant(ctx, 30)
 	cancel()
@@ -175,6 +212,64 @@ func (gn *Gnode) keepAlive() (<-chan *clientv3.LeaseKeepAliveResponse, error) {
 	return gn.etcd.cli.KeepAlive(context.TODO(), resp.ID)
 }
 
+func (gn *Gnode) raftdKeepAlive() {
+	// 先申请租约
+	// curl -s -XPOST 127.0.0.1:8001/lease/grant\?ttl=10\&name=/esq/node-1
+	cli := &http.Client{}
+	name := fmt.Sprintf("/esq/node-%d", gn.cfg.NodeId)
+	resp, err := cli.Post(fmt.Sprintf("http://"+gn.cfg.RaftdEndPoint+"/lease/grant?ttl=30&name=%s", name),
+		"application/json", nil)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	defer resp.Body.Close()
+	// 解析租约号
+	leaseIdbyte, _ := ioutil.ReadAll(resp.Body)
+	leaseId := string(leaseIdbyte)
+
+	ticker := time.NewTicker(5 * time.Second)
+	for {
+		select {
+		case <-gn.exitChan:
+			gn.raftdRevoke(leaseId)
+			return
+		case <-ticker.C:
+			// 然后维持这个租约 每5s发送一次
+			// curl -s -XPOST 127.0.0.1:8001/lease/keepalive/$ID
+			//     \-d 'key=nodeinfo'
+			//     \ -d 'data={"http_addr":"127.0.0.1:9003","tcp_addr":"127.0.0.1:9004","node_id":2,"weight":2}'
+			info := make(map[string]string)
+			info["tcp_addr"] = gn.cfg.TcpServAddr
+			info["http_addr"] = gn.cfg.HttpServAddr
+			info["weight"] = strconv.Itoa(gn.cfg.NodeWeight)
+			info["node_id"] = strconv.Itoa(gn.cfg.NodeId)
+			info["join_time"] = time.Now().Format("2006-01-02 15:04:05")
+			value, err := json.Marshal(info)
+			if err != nil {
+				log.Fatalln(err)
+			}
+			var r http.Request
+			r.ParseForm()
+			r.Form.Add("key", "nodeinfo")
+			r.Form.Add("data", string(value))
+			bodystr := strings.TrimSpace(r.Form.Encode())
+
+			request, err := http.NewRequest("POST",
+				fmt.Sprintf("http://"+gn.cfg.RaftdEndPoint+"/lease/keepalive/%s", leaseId),
+				strings.NewReader(bodystr))
+			if err != nil {
+				log.Fatalln(err)
+			}
+			request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			request.Header.Set("Connection", "Keep-Alive")
+			resp, err = http.DefaultClient.Do(request)
+			if err != nil {
+				log.Fatalln(err)
+			}
+		}
+	}
+}
+
 // 通知并等待所有 goroutine 退出
 func (gn *Gnode) Exit() {
 	close(gn.exitChan)
@@ -200,7 +295,9 @@ func NewGnodeConfig() *configs.GnodeConfig {
 	// command options
 	var endpoints string
 	flag.StringVar(&endpoints, "etcd_endpoints", cfg.TcpServAddr, "etcd endpoints")
+	flag.StringVar(&cfg.RaftdEndPoint, "raftd_endpoint", cfg.TcpServAddr, "raftd endpoint")
 	flag.BoolVar(&cfg.EnableCluster, "enable_cluster", cfg.EnableCluster, "enable cluster")
+	flag.BoolVar(&cfg.EnableRaftd, "enable_raftd", cfg.EnableRaftd, "enable cluster for service discovery")
 	flag.StringVar(&cfg.TcpServAddr, "tcp_addr", cfg.TcpServAddr, "tcp address")
 	flag.StringVar(&cfg.GregisterAddr, "register_addr", cfg.GregisterAddr, "register address")
 	flag.StringVar(&cfg.HttpServAddr, "http_addr", cfg.HttpServAddr, "http address")
