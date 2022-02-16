@@ -25,6 +25,7 @@ go run ./main.go
 ```
 
 ### 启动 esq 集群
+#### 使用etcd
 
 需要安装 etcd 并运行
 ``` sh
@@ -44,13 +45,26 @@ go build
 ./gnode -http_addr="127.0.0.1:9506" -tcp_addr="127.0.0.1:9505" -etcd_endpoints="127.0.0.1:2379" -node_id=2 -node_weight=2 -data_save_path=./data2 -enable_cluster=true
 ```
 
+#### 使用raftd
+
+首先安装 raftd<https://github.com/impact-eintr/raftd>
+
+``` sh
+./gnode -http_addr="127.0.0.1:9501" -tcp_addr="127.0.0.1:9502" -raftd_endpoint="127.0.0.1:8001" -node_id=1 -node_weight=1 -data_save_path=./data1 -enable_cluster=true -enable_raftd=true
+
+./gnode -http_addr="127.0.0.1:9503" -tcp_addr="127.0.0.1:9504" -raftd_endpoint="127.0.0.1:8001" -node_id=2 -node_weight=2 -data_save_path=./data2 -enable_cluster=true -enable_raftd=true
+```
 
 #### 简单的客户端测试 —— 发送与接受心跳
 
 ``` sh
-cd cmd/clusterCli
+# etcd版
+cd cmd/etcdClusterCli
 
-# 1 2 3 对应三种不同的选择节点的方式
+# raftd版
+cd cmd/raftdClusterCli
+
+# 1 2 4 3 对应四种不同的选择节点的方式
 go run ./main.go 1
 go run ./main.go 2
 go run ./main.go 3
@@ -59,7 +73,13 @@ go run ./main.go 3
 ### 客户端源码
 
 - 单节点 <https://github.com/impact-eintr/esq/blob/main/cmd/singleCli/main.go>
-- 集群模式 <https://github.com/impact-eintr/esq/blob/main/cmd/clusterCli/main.go>
+- 集群模式 
+  - etcd版 <https://github.com/impact-eintr/esq/tree/main/cmd/etcdClusterCli/main.go>
+  - raftd版 <https://github.com/impact-eintr/esq/blob/main/cmd/raftdClustrCli/main.go>
+
+## TODO
+raftd版暂时没有处理重定向的问题 之后有好的处理方式时更新
+
 
 ## 说点什么
 
