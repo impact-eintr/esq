@@ -68,6 +68,7 @@ cd cmd/raftdClusterCli
 go run ./main.go 1
 go run ./main.go 2
 go run ./main.go 3
+go run ./main.go 4
 ```
 
 ### 客户端源码
@@ -76,10 +77,6 @@ go run ./main.go 3
 - 集群模式 
   - etcd版 <https://github.com/impact-eintr/esq/tree/main/cmd/etcdClusterCli/main.go>
   - raftd版 <https://github.com/impact-eintr/esq/blob/main/cmd/raftdClustrCli/main.go>
-
-## TODO
-raftd版暂时没有处理重定向的问题 之后有好的处理方式时更新
-
 
 ## 说点什么
 
