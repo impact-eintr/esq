@@ -45,7 +45,6 @@ const REWRITE_SIZE = 100 * 1024 * 1024
 // 局部错误变量
 var (
 	ErrQueueClosed = errors.New("queue has been cloesd")
-	ErrQueueEmpty  = errors.New("queue was empty")
 )
 
 // queue 队列,消息存储地方
@@ -140,8 +139,6 @@ func (q *queue) loopRead() {
 		queueData, err := q.read(q.topic.isAutoAck)
 		switch err {
 		case nil:
-		case ErrQueueEmpty:
-			continue
 		default:
 			q.LogError(err)
 		}
@@ -382,11 +379,6 @@ func (q *queue) read(isAutoAck bool) (*readQueueData, error) {
 
 	q.Lock()
 	defer q.Unlock()
-
-	// 空队列就不读了
-	if atomic.LoadInt64(&q.num) == 0 {
-		return nil, ErrQueueEmpty
-	}
 
 	msgOffset := q.roffset
 	if q.roffset == q.woffset {
