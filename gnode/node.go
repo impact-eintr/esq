@@ -266,6 +266,7 @@ func (gn *Gnode) raftdKeepAlive() {
 			if err != nil {
 				log.Fatalln(err)
 			}
+			resp.Body.Close()
 		}
 	}
 }
