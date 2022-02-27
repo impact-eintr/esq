@@ -71,6 +71,9 @@ go run ./main.go 3
 go run ./main.go 4
 ```
 
+## 架构设计
+![img](img/esq架构设计.jpg)
+
 ### 客户端源码
 
 - 单节点 <https://github.com/impact-eintr/esq/blob/main/cmd/singleCli/main.go>

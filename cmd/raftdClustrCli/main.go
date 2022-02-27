@@ -185,6 +185,8 @@ func InitClients(endpoints string) ([]*Client, error) {
 	if err != nil {
 		return nil, err
 	}
+	defer resp.Body.Close()
+
 	infobyte, _ := ioutil.ReadAll(resp.Body) // 读出来的是一个数组 所以至少有 [] 长度为2
 	if len(infobyte) < 3 {
 		return nil, fmt.Errorf("暂时没有数据")
@@ -317,24 +319,34 @@ func main() {
 
 	// curl -s "http://cli.addr/config?topic=heartbeat&isAutoAck=1&mode=2&msgTTR=30&msgRetry=5"
 	cli.Config("heartbeat", 0, 2, 30, 5)
-	cli.Declare("heartbeat", cli1)
-	cli.Declare("heartbeat", cli2)
+	//cli.Declare("heartbeat", cli1)
+	//cli.Declare("heartbeat", cli2)
 
 	var MAX = 5
 
+	// 生产者
 	cli.Wrap(func() {
 		for i := 0; i < MAX; i++ {
 			cli.Push("Ping...", "heartbeat", "client*", 0)
-			time.Sleep(1 * time.Millisecond)
+			time.Sleep(1000 * time.Millisecond)
 		}
 	})
 
+	// 消费者1
 	cli.Wrap(func() {
-		for i := 0; i < MAX; i++ {
+		for i := 0; i < MAX-3; i++ {
+			cli.Declare("heartbeat", cli1)
+			cli.Pop("heartbeat", cli1)
+		}
+		time.Sleep(200 * time.Millisecond)
+		for i := 0; i < MAX-2; i++ {
+			cli.Declare("heartbeat", cli1)
 			cli.Pop("heartbeat", cli1)
 		}
 	})
+	// 消费者2
 	cli.Wrap(func() {
+		cli.Declare("heartbeat", cli2)
 		for i := 0; i < MAX; i++ {
 			cli.Pop("heartbeat", cli2)
 		}
