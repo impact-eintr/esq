@@ -439,9 +439,9 @@ func (t *Topic) dead(bindKey string) (*Msg, error) {
 		return nil, fmt.Errorf("bindkey:%s is not associated with queue", bindKey)
 	}
 
-	data, err := queue.read(t.isAutoAck)
-	if err != nil {
-		return nil, err
+	data := <-queue.readChan
+	if data == nil {
+		return nil, errors.New("no any message")
 	}
 
 	msg := Decode(data.data)
