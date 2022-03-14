@@ -318,7 +318,7 @@ func main() {
 	}
 
 	// curl -s "http://cli.addr/config?topic=heartbeat&isAutoAck=1&mode=2&msgTTR=30&msgRetry=5"
-	cli.Config("heartbeat", 0, 2, 30, 5)
+	cli.Config("heartbeat", 0, 2, 5, 5)
 	//cli.Declare("heartbeat", cli1)
 	//cli.Declare("heartbeat", cli2)
 
