@@ -17,7 +17,7 @@
 .idea
 
 *data*
-cmd/gnode/gnode
-cmd/gcli/gcli
+cmd/esqd/esqd
+cmd/raftdClustrCli/raftdClustrCli
 cmd/singleCli/singleCli
-cmd/clusterCli.clusterCli
+cmd/etcdClusterCli/etcdClusterCli
